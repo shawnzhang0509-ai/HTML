@@ -93,6 +93,14 @@
     .horizon-guide { stroke: #ff6b6b; stroke-width: 1.5; stroke-dasharray: 6 4; pointer-events: none; }
     .layer-dim { opacity: 0.12; }
     .kbd { font: 11px ui-monospace, monospace; background: #081c2e; padding: 1px 5px; border-radius: 4px; }
+    .layer-list { list-style: none; padding: 0; margin: 0 0 10px; max-height: 140px; overflow-y: auto; }
+    .layer-list li {
+      display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center;
+      margin: 4px 0; padding: 6px 8px; border-radius: 6px; border: 1px solid #2a5070;
+    }
+    .layer-list li.active { border-color: #5fd068; background: rgba(95, 208, 104, 0.12); }
+    .layer-list button.layer-select { text-align: left; padding: 4px 6px; margin: 0; background: transparent; border: none; }
+    .layer-list button.layer-del { width: auto; padding: 4px 10px; margin: 0; color: #f5a8a8; }
   </style>
 </head>
 <body class="mode-trace">
@@ -170,7 +178,7 @@
     <input id="wipePos" type="range" min="0" max="100" step="0.5" value="50" />
     <label>矢量层透明度</label>
     <input id="vecOp" type="range" min="0" max="1" step="0.01" value="1" />
-    <label><input type="checkbox" id="soloLayer" checked /> 单层模式（只显示当前层）</label>
+    <label><input type="checkbox" id="soloLayer" checked /> 单层模式（其它层完全隐藏，非半透明）</label>
     <label><input type="checkbox" id="showLake" /> 显示湖/树（描山建议关；树图裂了见下方说明）</label>
 
     <h3>3 · 当前层 · 峰点</h3>
@@ -178,8 +186,9 @@
       <button type="button" id="toolMove" class="active">移动/拖点</button>
       <button type="button" id="toolAdd">添加峰点</button>
     </div>
-    <p class="hint">移动模式：只拖绿点，不会误加点 · 要加点请切「添加峰点」· 双击删</p>
-    <select id="layerPick"></select>
+    <p class="hint">移动模式：只拖绿点 · 添加峰点切模式 · 双击删点</p>
+    <p class="hint">下面列表 = 全部山层；点一行选中，「删」只删该层（不是面片竖条）</p>
+    <ul id="layerList" class="layer-list"></ul>
     <div class="row2">
       <button type="button" id="layerAdd">+ 新增山层</button>
       <button type="button" id="layerDup">复制当前层</button>
@@ -491,19 +500,17 @@
       const tx = scene.tree.x * W;
       const ts = H * scene.tree.size * 0.55;
       const layers = scene.layers.map((l, i) => {
-        const dim = solo && i !== layerIdx;
-        const cls = dim ? 'layer-dim' : '';
-        const opAttr = dim ? ' opacity="0.15"' : '';
+        if (solo && i !== layerIdx) return '';
         const useFacet = l.faceted === true;
         if (useFacet) {
           return layerFacets(l)
             .map(
               (f, fi) =>
-                `<path class="mountain-fill ${cls}" data-layer="${i}" d="${f.d}" fill="${f.fill}"${opAttr}/>`,
+                `<path class="mountain-fill" data-layer="${i}" d="${f.d}" fill="${f.fill}"/>`,
             )
             .join('');
         }
-        return `<path class="mountain-fill ${cls}" data-layer="${i}" d="${layerPath(l)}" fill="${l.color}"${opAttr}/>`;
+        return `<path class="mountain-fill" data-layer="${i}" d="${layerPath(l)}" fill="${l.color}"/>`;
       }).join('');
       const r = scene.ref || {};
       let refSvg = '';
@@ -625,20 +632,38 @@
     }
 
     function refreshLayerSelect() {
-      const sel = document.getElementById('layerPick');
-      sel.innerHTML = '';
+      layerIdx = Math.min(layerIdx, Math.max(0, scene.layers.length - 1));
+      const ul = document.getElementById('layerList');
+      ul.innerHTML = '';
       scene.layers.forEach((l, i) => {
-        const o = document.createElement('option');
-        o.value = i;
-        o.textContent = `层 ${i + 1} ${l.cssVar}（${layerDepthLabel(i, scene.layers.length)}）`;
-        sel.appendChild(o);
+        const li = document.createElement('li');
+        li.className = i === layerIdx ? 'active' : '';
+        const depth = layerDepthLabel(i, scene.layers.length);
+        const facet = l.faceted ? ' · 面片' : '';
+        li.innerHTML = `<button type="button" class="layer-select" data-i="${i}">层${i + 1} ${l.cssVar}（${depth}）${facet} · ${l.peaks.length}点</button><button type="button" class="layer-del" data-del="${i}">删</button>`;
+        ul.appendChild(li);
       });
-      layerIdx = Math.min(layerIdx, scene.layers.length - 1);
-      sel.value = String(layerIdx);
+      ul.querySelectorAll('.layer-select').forEach((btn) => {
+        btn.onclick = () => {
+          layerIdx = +btn.dataset.i;
+          refreshLayerSelect();
+          render();
+        };
+      });
+      ul.querySelectorAll('.layer-del').forEach((btn) => {
+        btn.onclick = (ev) => {
+          ev.stopPropagation();
+          if (scene.layers.length <= 1) { alert('至少保留一层'); return; }
+          const idx = +btn.dataset.del;
+          scene.layers.splice(idx, 1);
+          if (layerIdx >= scene.layers.length) layerIdx = scene.layers.length - 1;
+          refreshLayerSelect();
+          render();
+        };
+      });
     }
 
     refreshLayerSelect();
-    document.getElementById('layerPick').onchange = e => { layerIdx = +e.target.value; render(); };
 
     document.getElementById('layerAdd').onclick = () => {
       const n = scene.layers.length;
@@ -1033,7 +1058,10 @@
         e.preventDefault();
         saveProject();
       }
-      if (e.key >= '1' && e.key <= '4') { layerIdx = +e.key - 1; document.getElementById('layerPick').value = String(layerIdx); render(); }
+      if (e.key >= '1' && e.key <= '9') {
+        const i = +e.key - 1;
+        if (i < scene.layers.length) { layerIdx = i; refreshLayerSelect(); render(); }
+      }
       if (e.key === 'h' || e.key === 'H') {
         const op = (scene.ref.opacity ?? 0.45) > 0.05 ? 0 : 0.45;
         touchRef({ opacity: op });
