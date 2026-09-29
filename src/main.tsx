@@ -24,7 +24,12 @@ function SceneLab() {
           font: '13px system-ui',
         }}
       >
-        <span>scene-lab · 改 lib/scene-config.ts 热更新</span>
+        <span>
+          scene-lab · 改 lib/scene-config.ts 热更新 · 对照底图请用{' '}
+          <a href="/scene-studio.html" style={{ color: '#9fd4ff' }}>
+            scene-studio.html
+          </a>
+        </span>
         <button type="button" onClick={() => setVariant('full')} style={btn(variant === 'full')}>
           全幅
         </button>
