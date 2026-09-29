@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wanaka Scene Studio</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 13px/1.4 system-ui, sans-serif; background: #0b2238; color: #e8eef4; display: grid; grid-template-columns: 1fr 280px; height: 100vh; }
+    #stage { position: relative; overflow: hidden; background: #07406d; }
+    #stage svg { width: 100%; height: 100%; display: block; }
+    #ref { position: absolute; inset: 0; pointer-events: none; opacity: 0; object-fit: cover; width: 100%; height: 100%; }
+    aside { overflow-y: auto; padding: 12px; border-left: 1px solid #1e3a55; background: #0f2a42; }
+    h2 { margin: 0 0 8px; font-size: 14px; }
+    label { display: block; margin: 8px 0 4px; color: #9cb8d4; }
+    input[type=range] { width: 100%; }
+    input[type=color] { width: 100%; height: 28px; border: none; padding: 0; background: transparent; }
+    select, button { width: 100%; margin: 6px 0; padding: 8px; border-radius: 6px; border: 1px solid #2a5070; background: #14324d; color: inherit; cursor: pointer; }
+    button.primary { background: #1a5a8a; border-color: #2a7ab0; }
+    .hint { color: #7a9bb8; font-size: 12px; margin: 8px 0; }
+    textarea { width: 100%; height: 120px; font: 11px/1.35 ui-monospace, monospace; background: #081c2e; color: #b8d4ea; border: 1px solid #2a5070; border-radius: 6px; padding: 8px; }
+    .handle { fill: #5fd068; stroke: #0a2f18; stroke-width: 2; cursor: grab; }
+    .handle.active { fill: #fff; }
+    .ridge { fill: none; stroke: rgba(255,255,255,.25); stroke-width: 1; pointer-events: stroke; cursor: crosshair; }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <img id="ref" alt="" />
+    <svg id="svg" viewBox="0 0 1000 1400" preserveAspectRatio="xMidYMid slice"></svg>
+  </div>
+  <aside>
+    <h2>Wanaka Scene Studio</h2>
+    <p class="hint">拖绿色圆点改峰形 · 点击脊线加点 · 双击删点 · 与 lib/scene-config.ts 同一套坐标</p>
+    <label>编辑层</label>
+    <select id="layerPick"></select>
+    <label>地平线 <span id="horizonVal"></span></label>
+    <input id="horizon" type="range" min="0.42" max="0.62" step="0.001" />
+    <label>层基准高度 base</label>
+    <input id="base" type="range" min="0" max="55" step="1" />
+    <label>柔和度 soft (0=硬峰)</label>
+    <input id="soft" type="range" min="0" max="1" step="0.01" />
+    <label>层颜色</label>
+    <input id="layerColor" type="color" />
+    <label>湖水</label>
+    <input id="lake" type="color" />
+    <label>树 X</label>
+    <input id="treeX" type="range" min="0.15" max="0.55" step="0.001" />
+    <label>参考图透明度</label>
+    <input id="refOp" type="range" min="0" max="1" step="0.01" value="0" />
+    <input id="refFile" type="file" accept="image/*" />
+    <button type="button" id="copyConfig" class="primary">复制 SCENE 片段到剪贴板</button>
+    <button type="button" id="dlWide">下载 wide SVG</button>
+    <button type="button" id="dlFull">下载 full SVG</button>
+    <label>导出预览</label>
+    <textarea id="out" readonly></textarea>
+  </aside>
+  <script>
+    const W = 1000, H = 1400;
+    const LS_KEY = 'wanaka-scene-studio-v1';
+
+    const defaultScene = {
+      horizon: 0.54,
+      colors: { sky: '#07406d', lake: '#0a5083', lakedeep: '#083a63', band: '#2a6ea0', snow: '#e8eef4' },
+      tree: { x: 0.33, size: 0.15, src: '/tree.svg' },
+      layers: [
+        { color: '#6c99bb', cssVar: '--m1', base: 0, soft: 0.25, peaks: [{x:0,y:.62},{x:.1,y:.78},{x:.22,y:.58},{x:.34,y:.82},{x:.46,y:.6},{x:.58,y:.8},{x:.7,y:.58},{x:.82,y:.76},{x:.94,y:.62},{x:1,y:.7}] },
+        { color: '#3f6f9e', cssVar: '--m2', base: 12, soft: 0.18, peaks: [{x:0,y:.44},{x:.13,y:.62},{x:.26,y:.4},{x:.4,y:.66},{x:.53,y:.42},{x:.66,y:.62},{x:.79,y:.44},{x:.92,y:.6},{x:1,y:.48}] },
+        { color: '#1d4f7d', cssVar: '--m3', base: 26, soft: 0.12, peaks: [{x:0,y:.28},{x:.16,y:.48},{x:.31,y:.24},{x:.47,y:.52},{x:.62,y:.26},{x:.77,y:.46},{x:.9,y:.28},{x:1,y:.4}] },
+        { color: '#0a2f52', cssVar: '--m4', base: 40, soft: 0.08, peaks: [{x:0,y:.12},{x:.2,y:.34},{x:.38,y:.1},{x:.56,y:.36},{x:.74,y:.12},{x:.9,y:.3},{x:1,y:.18}] },
+      ],
+    };
+
+    let scene = loadScene();
+    let layerIdx = 3;
+    let drag = null;
+
+    const svg = document.getElementById('svg');
+    const layerPick = document.getElementById('layerPick');
+
+    function loadScene() {
+      try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (raw) return JSON.parse(raw);
+      } catch (_) {}
+      return structuredClone(defaultScene);
+    }
+    function saveScene() {
+      localStorage.setItem(LS_KEY, JSON.stringify(scene));
+    }
+
+    function peakPx(p, layer) {
+      const y = (scene.horizon - 0.05 - p.y * (scene.horizon - 0.16)) * H - layer.base * 6;
+      return { x: p.x * W, y };
+    }
+    function pxToPeak(x, y, layer) {
+      const py = (scene.horizon - 0.05 - (y + layer.base * 6) / H) / (scene.horizon - 0.16);
+      return { x: Math.min(1, Math.max(0, x / W)), y: Math.min(1, Math.max(0, py)) };
+    }
+    function layerPath(layer) {
+      const y0 = H * scene.horizon;
+      const P = layer.peaks.map(p => peakPx(p, layer));
+      let d = `M-20 ${P[0].y.toFixed(0)}`;
+      for (let i = 0; i < P.length - 1; i++) {
+        const a = P[i], b = P[i + 1];
+        if (layer.soft > 0.02)
+          d += ` Q ${a.x.toFixed(0)} ${a.y.toFixed(0)} ${((a.x + b.x) / 2).toFixed(0)} ${((a.y + b.y) / 2).toFixed(0)}`;
+        else d += ` L ${a.x.toFixed(0)} ${a.y.toFixed(0)}`;
+      }
+      const last = P[P.length - 1];
+      d += ` L ${last.x.toFixed(0)} ${last.y.toFixed(0)} L 1020 ${y0 + 2} L -20 ${y0 + 2} Z`;
+      return d;
+    }
+    function viewBox(variant) {
+      return variant === 'wide'
+        ? `0 ${Math.round(H * (scene.horizon - 0.36))} ${W} ${Math.round(H * 0.52)}`
+        : `0 0 ${W} ${H}`;
+    }
+    function buildSvg(variant) {
+      const y0 = Math.round(H * scene.horizon);
+      const ty = H * (scene.horizon - 0.02) - H * scene.tree.size;
+      const tx = scene.tree.x * W;
+      const ts = H * scene.tree.size * 0.55;
+      const paths = scene.layers.map(l => `<path d="${layerPath(l)}" fill="${l.color}"/>`).join('');
+      return `<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox(variant)}" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="lakeG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${scene.colors.lake}"/><stop offset="1" stop-color="${scene.colors.lakedeep}"/></linearGradient></defs><rect x="0" y="${y0}" width="${W}" height="${H - y0}" fill="url(#lakeG)"/><rect x="0" y="${y0 - 2}" width="${W}" height="3" fill="${scene.colors.band}" opacity="0.5"/>${paths}<image href="${scene.tree.src}" x="${tx}" y="${ty}" width="${ts * 0.58}" height="${ts}"/></svg>`;
+    }
+
+    function render() {
+      const y0 = Math.round(H * scene.horizon);
+      const ty = H * (scene.horizon - 0.02) - H * scene.tree.size;
+      const tx = scene.tree.x * W;
+      const ts = H * scene.tree.size * 0.55;
+      svg.innerHTML = `
+        <defs><linearGradient id="lakeG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${scene.colors.lake}"/><stop offset="1" stop-color="${scene.colors.lakedeep}"/></linearGradient></defs>
+        <rect x="0" y="${y0}" width="${W}" height="${H - y0}" fill="url(#lakeG)"/>
+        <rect x="0" y="${y0 - 2}" width="${W}" height="3" fill="${scene.colors.band}" opacity="0.5"/>
+        ${scene.layers.map((l, i) => `<path data-layer="${i}" class="mountain" d="${layerPath(l)}" fill="${l.color}"/>`).join('')}
+        <image href="${scene.tree.src}" x="${tx}" y="${ty}" width="${ts * 0.58}" height="${ts}"/>
+        <g id="handles"></g>`;
+      const g = svg.querySelector('#handles');
+      const layer = scene.layers[layerIdx];
+      layer.peaks.forEach((p, pi) => {
+        const { x, y } = peakPx(p, layer);
+        const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        c.setAttribute('class', 'handle');
+        c.setAttribute('data-pi', String(pi));
+        c.setAttribute('cx', x); c.setAttribute('cy', y); c.setAttribute('r', layerIdx === layerIdx ? 9 : 7);
+        c.setAttribute('r', '9');
+        g.appendChild(c);
+      });
+      const ridge = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      ridge.setAttribute('class', 'ridge');
+      ridge.setAttribute('d', layer.peaks.map((p, i) => {
+        const pt = peakPx(p, layer);
+        return `${i ? 'L' : 'M'} ${pt.x} ${pt.y}`;
+      }).join(' '));
+      g.insertBefore(ridge, g.firstChild);
+      syncPanel();
+      document.getElementById('out').value = formatLayersSnippet();
+      saveScene();
+    }
+
+    function formatLayersSnippet() {
+      const layers = scene.layers.map(l => {
+        const peaks = l.peaks.map(p => `{x:${p.x.toFixed(3)},y:${p.y.toFixed(3)}}`).join(',');
+        return `    { color: '${l.color}', cssVar: '${l.cssVar}', base: ${l.base}, soft: ${l.soft.toFixed(2)}, peaks: [ ${peaks} ] }`;
+      }).join(',\n');
+      return `horizon: ${scene.horizon.toFixed(3)},\ncolors: { lake: '${scene.colors.lake}', ... },\ntree: { x: ${scene.tree.x.toFixed(3)}, size: ${scene.tree.size}, src: '${scene.tree.src}' },\nlayers: [\n${layers}\n]`;
+    }
+
+    function syncPanel() {
+      document.getElementById('horizon').value = scene.horizon;
+      document.getElementById('horizonVal').textContent = scene.horizon.toFixed(3);
+      const L = scene.layers[layerIdx];
+      document.getElementById('base').value = L.base;
+      document.getElementById('soft').value = L.soft;
+      document.getElementById('layerColor').value = L.color;
+      document.getElementById('lake').value = scene.colors.lake;
+      document.getElementById('treeX').value = scene.tree.x;
+    }
+
+    scene.layers.forEach((l, i) => {
+      const o = document.createElement('option');
+      o.value = i; o.textContent = `层 ${i + 1} ${l.cssVar}`;
+      layerPick.appendChild(o);
+    });
+    layerPick.value = String(layerIdx);
+    layerPick.onchange = () => { layerIdx = +layerPick.value; render(); };
+
+    ['horizon','base','soft','treeX'].forEach(id => {
+      document.getElementById(id).oninput = (e) => {
+        const v = +e.target.value;
+        if (id === 'horizon') scene.horizon = v;
+        else if (id === 'treeX') scene.tree.x = v;
+        else if (id === 'base') scene.layers[layerIdx].base = v;
+        else scene.layers[layerIdx].soft = v;
+        render();
+      };
+    });
+    document.getElementById('layerColor').oninput = e => { scene.layers[layerIdx].color = e.target.value; render(); };
+    document.getElementById('lake').oninput = e => { scene.colors.lake = e.target.value; render(); };
+    document.getElementById('refOp').oninput = e => { document.getElementById('ref').style.opacity = e.target.value; };
+    document.getElementById('refFile').onchange = e => {
+      const f = e.target.files?.[0]; if (!f) return;
+      const r = new FileReader();
+      r.onload = () => { document.getElementById('ref').src = r.result; document.getElementById('refOp').value = '0.35'; document.getElementById('ref').style.opacity = '0.35'; };
+      r.readAsDataURL(f);
+    };
+
+    function svgPoint(evt) {
+      const pt = svg.createSVGPoint();
+      pt.x = evt.clientX; pt.y = evt.clientY;
+      const m = svg.getScreenCTM()?.inverse();
+      return m ? pt.matrixTransform(m) : { x: 0, y: 0 };
+    }
+
+    svg.addEventListener('pointerdown', e => {
+      const t = e.target;
+      if (t.classList?.contains('handle')) {
+        drag = { pi: +t.dataset.pi };
+        t.classList.add('active');
+        t.setPointerCapture(e.pointerId);
+        return;
+      }
+      if (t.classList?.contains('ridge')) {
+        const p = svgPoint(e);
+        const layer = scene.layers[layerIdx];
+        const np = pxToPeak(p.x, p.y, layer);
+        let ins = layer.peaks.length;
+        for (let i = 0; i < layer.peaks.length - 1; i++) {
+          if (np.x > layer.peaks[i].x && np.x < layer.peaks[i + 1].x) { ins = i + 1; break; }
+        }
+        layer.peaks.splice(ins, 0, np);
+        render();
+      }
+    });
+    svg.addEventListener('pointermove', e => {
+      if (!drag) return;
+      const p = svgPoint(e);
+      const layer = scene.layers[layerIdx];
+      layer.peaks[drag.pi] = pxToPeak(p.x, p.y, layer);
+      layer.peaks.sort((a, b) => a.x - b.x);
+      render();
+    });
+    svg.addEventListener('pointerup', () => { drag = null; });
+    svg.addEventListener('dblclick', e => {
+      const t = e.target;
+      if (!t.classList?.contains('handle')) return;
+      const pi = +t.dataset.pi;
+      const layer = scene.layers[layerIdx];
+      if (layer.peaks.length <= 3) return;
+      layer.peaks.splice(pi, 1);
+      render();
+    });
+
+    document.getElementById('copyConfig').onclick = async () => {
+      const text = formatLayersSnippet();
+      await navigator.clipboard.writeText(text);
+    };
+    document.getElementById('dlWide').onclick = () => download('wanaka-wide.svg', buildSvg('wide'));
+    document.getElementById('dlFull').onclick = () => download('wanaka-full.svg', buildSvg('full'));
+    function download(name, content) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([content], { type: 'image/svg+xml' }));
+      a.download = name; a.click();
+    }
+
+    render();
+  </script>
+</body>
+</html>
