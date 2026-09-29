@@ -83,6 +83,7 @@
     .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
     .row2 button { margin: 0; }
     .handle { fill: #5fd068; stroke: #0a2f18; stroke-width: 2; cursor: grab; pointer-events: all; }
+    .handle.selected { fill: #fff; stroke: #5fd068; stroke-width: 3; }
     .handle.active { fill: #fff; }
     .ridge { fill: none; stroke: rgba(255,255,255,.55); stroke-width: 2; pointer-events: none; }
     .ridge-hit { fill: none; stroke: transparent; stroke-width: 28; pointer-events: none; }
@@ -189,7 +190,8 @@
       <button type="button" id="toolMove" class="active">移动/拖点</button>
       <button type="button" id="toolAdd">添加峰点</button>
     </div>
-    <p class="hint">移动模式：只拖绿点 · 添加峰点切模式 · 双击删点</p>
+    <button type="button" id="deletePeak">删除选中峰点</button>
+    <p class="hint">点绿点选中（变白）→ <span class="kbd">Delete</span> 或上方按钮删；至少保留 3 个点 · 双击绿点也可删</p>
     <p class="hint">下面列表 = 全部山层；点一行选中，「删」只删该层（不是面片竖条）</p>
     <ul id="layerList" class="layer-list"></ul>
     <div class="row2">
@@ -217,15 +219,19 @@
     <input id="layerColor" type="color" />
 
     <h3>4 · 存档</h3>
-    <button type="button" id="saveProject" class="primary">保存 scene-workbench.json</button>
-    <button type="button" id="loadProject">读取 scene-workbench.json</button>
-    <p class="hint" id="saveStatus">用 <code>npm run dev</code> 打开时，保存到项目根目录（与 scene-studio.html 同文件夹）</p>
+    <button type="button" id="saveProject" class="primary">保存 (Ctrl+S)</button>
+    <button type="button" id="loadProject">从项目重新加载</button>
+    <div class="row2">
+      <button type="button" id="openJsonFile">打开 JSON…</button>
+      <button type="button" id="chooseSaveFile">指定保存路径…</button>
+    </div>
+    <p class="hint" id="saveStatus">用 <code>npm run dev</code> 打开时，保存/加载项目根目录的 <code>scene-workbench.json</code></p>
+    <p class="hint">「打开」= 读进画布 · 「指定保存路径」= 只告诉 Ctrl+S 写哪个文件，<strong>不会</strong>读取</p>
     <button type="button" id="copyConfig">复制 → scene-config.ts 片段</button>
-    <button type="button" id="pickProjectFile">绑定本地文件…</button>
     <input id="jsonFile" type="file" accept="application/json,.json" hidden />
     <label>片段预览</label>
     <textarea id="out" readonly></textarea>
-    <p class="hint">快捷键：<span class="kbd">Ctrl+S</span> 保存 · <span class="kbd">A</span> 峰点 · <span class="kbd">H</span> 底图</p>
+    <p class="hint">快捷键：<span class="kbd">Ctrl+S</span> 保存 · <span class="kbd">Ctrl+Z</span> 撤回 · <span class="kbd">Delete</span> 删选中峰点</p>
   </aside>
   <script>
     const LS_KEY = 'wanaka-scene-trace-v8';
@@ -266,6 +272,62 @@
     let refDrag = null;
     let viewMode = 'trace';
     let editTool = 'move';
+    let selectedPi = null;
+    let dirty = false;
+    const undoPast = [];
+    const undoFuture = [];
+    const UNDO_MAX = 48;
+
+    function captureScene() {
+      return JSON.parse(JSON.stringify(scene));
+    }
+
+    function historyBeforeEdit() {
+      undoPast.push(captureScene());
+      if (undoPast.length > UNDO_MAX) undoPast.shift();
+      undoFuture.length = 0;
+      dirty = true;
+    }
+
+    function undoEdit() {
+      if (!undoPast.length) {
+        flashHint('没有可撤回的步骤');
+        return;
+      }
+      undoFuture.push(captureScene());
+      scene = undoPast.pop();
+      layerIdx = Math.min(layerIdx, Math.max(0, scene.layers.length - 1));
+      selectedPi = null;
+      render();
+      flashHint('已撤回');
+    }
+
+    function redoEdit() {
+      if (!undoFuture.length) {
+        flashHint('没有可重做的步骤');
+        return;
+      }
+      undoPast.push(captureScene());
+      scene = undoFuture.pop();
+      layerIdx = Math.min(layerIdx, Math.max(0, scene.layers.length - 1));
+      selectedPi = null;
+      render();
+      flashHint('已重做');
+    }
+
+    function deletePeakAt(pi) {
+      const layer = scene.layers[layerIdx];
+      if (layer.peaks.length <= 3) {
+        flashHint('每层至少保留 3 个峰点');
+        return false;
+      }
+      historyBeforeEdit();
+      layer.peaks.splice(pi, 1);
+      selectedPi = null;
+      render();
+      flashHint(`已删除峰点，当前层 ${layer.peaks.length} 个`);
+      return true;
+    }
 
     function getW() { return scene.canvas?.width ?? 1000; }
     function getH() { return scene.canvas?.height ?? 1400; }
@@ -404,6 +466,7 @@
       for (let i = 0; i < layer.peaks.length - 1; i++) {
         if (np.x > layer.peaks[i].x && np.x < layer.peaks[i + 1].x) { ins = i + 1; break; }
       }
+      historyBeforeEdit();
       layer.peaks.splice(ins, 0, np);
       layer.peaks.sort((a, b) => a.x - b.x);
       flashHint(`已添加峰点，当前层共 ${layer.peaks.length} 个`);
@@ -531,7 +594,8 @@
       return document.getElementById('soloLayer').checked;
     }
 
-    function svgInner() {
+    function svgInner(opts = {}) {
+      const { vectors = true } = opts;
       const H = getH(), W = getW();
       const y0 = Math.round(H * scene.horizon);
       const showLake = document.getElementById('showLake').checked;
@@ -539,19 +603,23 @@
       const ty = H * (scene.horizon - 0.02) - H * scene.tree.size;
       const tx = scene.tree.x * W;
       const ts = H * scene.tree.size * 0.55;
-      const layers = scene.layers.map((l, i) => {
-        if (solo && i !== layerIdx) return '';
-        const useFacet = l.faceted === true;
-        if (useFacet) {
-          return layerFacets(l)
-            .map(
-              (f, fi) =>
-                `<path class="mountain-fill" data-layer="${i}" d="${f.d}" fill="${f.fill}"/>`,
-            )
-            .join('');
-        }
-        return `<path class="mountain-fill" data-layer="${i}" d="${layerPath(l)}" fill="${l.color}"/>`;
-      }).join('');
+      const layers = vectors
+        ? scene.layers
+            .map((l, i) => {
+              if (solo && i !== layerIdx) return '';
+              const useFacet = l.faceted === true;
+              if (useFacet) {
+                return layerFacets(l)
+                  .map(
+                    (f, fi) =>
+                      `<path class="mountain-fill" data-layer="${i}" d="${f.d}" fill="${f.fill}"/>`,
+                  )
+                  .join('');
+              }
+              return `<path class="mountain-fill" data-layer="${i}" d="${layerPath(l)}" fill="${l.color}"/>`;
+            })
+            .join('')
+        : '';
       const r = scene.ref || {};
       let refSvg = '';
       if (r.dataUrl) {
@@ -591,6 +659,7 @@
         c.setAttribute('cx', x);
         c.setAttribute('cy', y);
         c.setAttribute('r', '11');
+        if (selectedPi === pi) c.classList.add('selected');
         g.appendChild(c);
       });
     }
@@ -618,7 +687,10 @@
       syncCanvasPanel();
       const inner = svgInner();
       svg.innerHTML = inner;
-      svgWipe.innerHTML = inner.replace(/<g id="handles"><\/g>/, '').replace(/<rect class="add-surface"[^/]*\/>/, '');
+      const wipeInner = svgInner({ vectors: viewMode !== 'wipe' })
+        .replace(/<g id="handles"><\/g>/, '')
+        .replace(/<rect class="add-surface"[^/]*\/>/, '');
+      svgWipe.innerHTML = wipeInner;
       mountHandles(svg.querySelector('#handles'));
       const oldAdd = svg.querySelector('#addSurface');
       if (oldAdd) oldAdd.remove();
@@ -708,6 +780,7 @@
       ul.querySelectorAll('.layer-select').forEach((btn) => {
         btn.onclick = () => {
           layerIdx = +btn.dataset.i;
+          selectedPi = null;
           refreshLayerSelect();
           render();
         };
@@ -716,8 +789,10 @@
         btn.onclick = (ev) => {
           ev.stopPropagation();
           if (scene.layers.length <= 1) { alert('至少保留一层'); return; }
+          historyBeforeEdit();
           const idx = +btn.dataset.del;
           scene.layers.splice(idx, 1);
+          selectedPi = null;
           if (layerIdx >= scene.layers.length) layerIdx = scene.layers.length - 1;
           refreshLayerSelect();
           render();
@@ -728,6 +803,7 @@
     refreshLayerSelect();
 
     document.getElementById('layerAdd').onclick = () => {
+      historyBeforeEdit();
       const n = scene.layers.length;
       const last = scene.layers[n - 1];
       scene.layers.push({
@@ -747,6 +823,7 @@
       render();
     };
     document.getElementById('layerDup').onclick = () => {
+      historyBeforeEdit();
       const src = scene.layers[layerIdx];
       const copy = JSON.parse(JSON.stringify(src));
       copy.cssVar = `--m${scene.layers.length + 1}`;
@@ -758,7 +835,9 @@
     };
     document.getElementById('layerDel').onclick = () => {
       if (scene.layers.length <= 1) { alert('至少保留一层'); return; }
+      historyBeforeEdit();
       scene.layers.splice(layerIdx, 1);
+      selectedPi = null;
       layerIdx = Math.max(0, layerIdx - 1);
       refreshLayerSelect();
       render();
@@ -949,13 +1028,21 @@
       const t = e.target;
       if (t.classList?.contains('handle')) {
         const pi = +t.dataset.pi;
+        selectedPi = pi;
         const layer = scene.layers[layerIdx];
         drag = {
           pi,
           handleEl: t,
           lockX: layer.peaks[pi].x,
+          moved: false,
+          startX: e.clientX,
+          startY: e.clientY,
+          historySaved: false,
         };
         t.classList.add('active');
+        svg.querySelectorAll('.handle').forEach((h) => {
+          h.classList.toggle('selected', +h.dataset.pi === pi);
+        });
         t.setPointerCapture(e.pointerId);
         e.preventDefault();
         return;
@@ -974,6 +1061,16 @@
         return;
       }
       if (!drag) return;
+      const dx = e.clientX - drag.startX;
+      const dy = e.clientY - drag.startY;
+      if (!drag.moved && dx * dx + dy * dy > 16) {
+        drag.moved = true;
+        if (!drag.historySaved) {
+          historyBeforeEdit();
+          drag.historySaved = true;
+        }
+      }
+      if (!drag.moved) return;
       const p = svgPoint(e);
       const layer = scene.layers[layerIdx];
       const np = pxToPeak(p.x, p.y, layer);
@@ -993,11 +1090,17 @@
     svg.addEventListener('dblclick', e => {
       const t = e.target;
       if (!t.classList?.contains('handle')) return;
-      const layer = scene.layers[layerIdx];
-      if (layer.peaks.length <= 3) return;
-      layer.peaks.splice(+t.dataset.pi, 1);
-      render();
+      e.preventDefault();
+      deletePeakAt(+t.dataset.pi);
     });
+
+    document.getElementById('deletePeak').onclick = () => {
+      if (selectedPi == null) {
+        flashHint('先点选一个绿点');
+        return;
+      }
+      deletePeakAt(selectedPi);
+    };
 
     document.getElementById('copyConfig').onclick = () => navigator.clipboard.writeText(formatSnippet());
 
@@ -1021,6 +1124,7 @@
           body,
         });
         if (r.ok) {
+          dirty = false;
           setSaveStatus('已保存：' + WORKBENCH_NAME + '（项目根目录）');
           flashHint('保存成功');
           return;
@@ -1031,6 +1135,7 @@
         const w = await fsFileHandle.createWritable();
         await w.write(body);
         await w.close();
+        dirty = false;
         setSaveStatus('已保存：' + fsFileHandle.name);
         flashHint('保存成功');
         return;
@@ -1045,6 +1150,7 @@
           const w = await fsFileHandle.createWritable();
           await w.write(body);
           await w.close();
+          dirty = false;
           setSaveStatus('已保存：' + fsFileHandle.name);
           return;
         } catch (_) { /* 用户取消 */ }
@@ -1057,68 +1163,87 @@
       setSaveStatus('已下载 ' + WORKBENCH_NAME + '，请放到 HTML 项目文件夹');
     }
 
+    function applyLoadedScene(name, silent) {
+      undoPast.length = 0;
+      undoFuture.length = 0;
+      dirty = false;
+      selectedPi = null;
+      layerIdx = Math.min(layerIdx, scene.layers.length - 1);
+      render();
+      setSaveStatus('已打开：' + name);
+      if (!silent) flashHint('已加载到画布');
+    }
+
     async function loadProject(silent) {
+      if (!silent && dirty && !confirm('重新加载会丢弃未保存修改，继续？')) return false;
       try {
         const r = await fetch('/api/scene-workbench');
         if (r.ok) {
           scene = JSON.parse(await r.text());
-          layerIdx = Math.min(layerIdx, scene.layers.length - 1);
-          render();
-          setSaveStatus('已读取：' + WORKBENCH_NAME);
-          if (!silent) flashHint('读取成功');
+          applyLoadedScene(WORKBENCH_NAME, silent);
           return true;
         }
       } catch (_) {}
 
-      if (fsFileHandle) {
-        const f = await fsFileHandle.getFile();
-        scene = JSON.parse(await f.text());
-        layerIdx = Math.min(layerIdx, scene.layers.length - 1);
-        render();
-        setSaveStatus('已读取：' + fsFileHandle.name);
-        return true;
-      }
-
-      if (!silent) document.getElementById('jsonFile').click();
+      if (!silent) flashHint('未连上 dev 服务器，请用「打开 JSON…」');
       return false;
     }
 
-    document.getElementById('saveProject').onclick = () => saveProject();
-    document.getElementById('loadProject').onclick = () => loadProject(false);
-    document.getElementById('pickProjectFile').onclick = async () => {
-      if (!window.showOpenFilePicker) {
-        document.getElementById('jsonFile').click();
-        return;
-      }
-      try {
-        const [h] = await window.showOpenFilePicker({
-          types: [{ accept: { 'application/json': ['.json'] } }],
-        });
-        fsFileHandle = h;
-        const f = await h.getFile();
-        scene = JSON.parse(await f.text());
-        render();
-        setSaveStatus('已绑定：' + h.name + '（Ctrl+S 直接写此文件）');
-      } catch (_) {}
-    };
-    document.getElementById('jsonFile').onchange = e => {
-      const f = e.target.files?.[0];
-      if (!f) return;
+    function openJsonFromFile(file) {
+      if (dirty && !confirm('打开文件会覆盖当前未保存内容，继续？')) return;
       const r = new FileReader();
       r.onload = () => {
         try {
           scene = JSON.parse(r.result);
-          render();
-          setSaveStatus('已读取：' + f.name);
+          applyLoadedScene(file.name, false);
         } catch (_) { alert('JSON 无效'); }
       };
-      r.readAsText(f);
+      r.readAsText(file);
+    }
+
+    document.getElementById('saveProject').onclick = () => saveProject();
+    document.getElementById('loadProject').onclick = () => loadProject(false);
+    document.getElementById('openJsonFile').onclick = () => {
+      document.getElementById('jsonFile').click();
+    };
+    document.getElementById('chooseSaveFile').onclick = async () => {
+      if (!window.showSaveFilePicker) {
+        flashHint('此浏览器请用「保存」下载 JSON，或换 Chrome/Edge');
+        return;
+      }
+      try {
+        fsFileHandle = await window.showSaveFilePicker({
+          suggestedName: WORKBENCH_NAME,
+          types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }],
+        });
+        setSaveStatus('Ctrl+S 将写入：' + fsFileHandle.name + '（未读取该文件内容）');
+        flashHint('保存路径已指定，点保存或 Ctrl+S 写入');
+      } catch (_) {}
+    };
+    document.getElementById('jsonFile').onchange = e => {
+      const f = e.target.files?.[0];
+      if (f) openJsonFromFile(f);
+      e.target.value = '';
     };
 
     window.addEventListener('keydown', e => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
         saveProject();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undoEdit();
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+        e.preventDefault();
+        redoEdit();
+      }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (e.target.closest('input, textarea, select')) return;
+        e.preventDefault();
+        if (selectedPi != null) deletePeakAt(selectedPi);
+        else flashHint('先点选要删的绿点');
       }
       if (e.key >= '1' && e.key <= '9') {
         const i = +e.key - 1;
