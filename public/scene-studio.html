@@ -97,8 +97,11 @@
     .ridge { fill: none; stroke: rgba(255,255,255,.55); stroke-width: 2; pointer-events: none; }
     .ridge-hit { fill: none; stroke: transparent; stroke-width: 28; pointer-events: stroke; cursor: crosshair; }
     .mountain-fill { pointer-events: none; }
-    .add-surface { fill: rgba(0,0,0,0); cursor: crosshair; display: none; }
-    body.tool-add .add-surface { display: block; }
+    .add-surface { fill: transparent; cursor: crosshair; pointer-events: none; }
+    body.tool-add .add-surface { pointer-events: all; }
+    body.tool-add .handle,
+    body.tool-add .ridge-hit { pointer-events: none; }
+    .scene-bg { pointer-events: none; }
     #toolHint { position: absolute; left: 12px; bottom: 12px; padding: 8px 10px; background: rgba(0,0,0,.55); border-radius: 8px; font-size: 12px; color: #cde; pointer-events: none; }
     .horizon-guide { stroke: #ff6b6b; stroke-width: 1.5; stroke-dasharray: 6 4; pointer-events: none; }
     .layer-dim { opacity: 0.12; }
@@ -131,7 +134,9 @@
       <input type="number" id="canvasW" min="320" max="4096" step="1" value="1000" title="宽" />
       <input type="number" id="canvasH" min="320" max="4096" step="1" value="1400" title="高" />
     </div>
-    <button type="button" id="preset1400">预设 1000×1400 竖版</button>
+    <button type="button" id="applyCanvas">应用上方宽高</button>
+    <button type="button" id="preset1920">1080 × 1920（即梦竖图）</button>
+    <button type="button" id="preset1400">1000 × 1400（Hero 竖版）</button>
     <button type="button" id="canvasFromRef">画布 = 底图像素尺寸</button>
     <label>SVG 适配</label>
     <select id="canvasFit">
@@ -228,10 +233,25 @@
     const refWrap = document.getElementById('refWrap');
     const refImg = document.getElementById('ref');
 
+    function clampCanvas(w, h) {
+      return {
+        width: Math.min(8192, Math.max(320, Math.round(Number(w)) || 1000)),
+        height: Math.min(8192, Math.max(320, Math.round(Number(h)) || 1400)),
+      };
+    }
+
     function loadScene() {
       try {
         const raw = localStorage.getItem(LS_KEY);
-        if (raw) return JSON.parse(raw);
+        if (raw) {
+          const s = JSON.parse(raw);
+          if (s.canvas) {
+            const c = clampCanvas(s.canvas.width, s.canvas.height);
+            s.canvas.width = c.width;
+            s.canvas.height = c.height;
+          }
+          return s;
+        }
       } catch (_) {}
       return structuredClone(defaultScene);
     }
@@ -280,12 +300,21 @@
 
     refImg.addEventListener('load', updateRefSizeHint);
 
+    function flashHint(msg) {
+      const el = document.getElementById('toolHint');
+      el.textContent = msg;
+      clearTimeout(flashHint._t);
+      flashHint._t = setTimeout(updateToolUi, 1600);
+    }
+
     function insertPeak(layer, np) {
       let ins = layer.peaks.length;
       for (let i = 0; i < layer.peaks.length - 1; i++) {
         if (np.x > layer.peaks[i].x && np.x < layer.peaks[i + 1].x) { ins = i + 1; break; }
       }
       layer.peaks.splice(ins, 0, np);
+      layer.peaks.sort((a, b) => a.x - b.x);
+      flashHint(`已添加峰点，当前层共 ${layer.peaks.length} 个`);
       render();
     }
 
@@ -330,9 +359,9 @@
         return `<path class="mountain-fill ${cls}" data-layer="${i}" d="${layerPath(l)}" fill="${l.color}" ${dim ? 'opacity="0.15"' : ''}/>`;
       }).join('');
       const lake = showLake ? `
-        <rect x="0" y="${y0}" width="${W}" height="${H - y0}" fill="${scene.colors.lake}"/>
-        <rect x="0" y="${y0 - 2}" width="${W}" height="3" fill="${scene.colors.band}" opacity="0.45"/>
-        <image href="${scene.tree.src}" x="${tx}" y="${ty}" width="${ts * 0.58}" height="${ts}"/>
+        <rect class="scene-bg" x="0" y="${y0}" width="${W}" height="${H - y0}" fill="${scene.colors.lake}"/>
+        <rect class="scene-bg" x="0" y="${y0 - 2}" width="${W}" height="3" fill="${scene.colors.band}" opacity="0.45"/>
+        <image class="scene-bg" href="${scene.tree.src}" x="${tx}" y="${ty}" width="${ts * 0.58}" height="${ts}"/>
       ` : '';
       const hz = `<line class="horizon-guide" x1="0" y1="${y0}" x2="${W}" y2="${y0}"/>`;
       return `${lake}${layers}${hz}<g id="handles"></g>`;
@@ -381,8 +410,17 @@
       svg.innerHTML = inner;
       svgWipe.innerHTML = inner.replace(/<g id="handles"><\/g>/, '').replace(/<rect class="add-surface"[^/]*\/>/, '');
       mountHandles(svg.querySelector('#handles'));
-      const addEl = svg.querySelector('#addSurface');
-      if (addEl) addEl.addEventListener('pointerdown', onAddSurfaceClick);
+      const oldAdd = svg.querySelector('#addSurface');
+      if (oldAdd) oldAdd.remove();
+      const addEl = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      addEl.setAttribute('class', 'add-surface');
+      addEl.setAttribute('id', 'addSurface');
+      addEl.setAttribute('x', '0');
+      addEl.setAttribute('y', '0');
+      addEl.setAttribute('width', String(getW()));
+      addEl.setAttribute('height', String(getH()));
+      addEl.addEventListener('pointerdown', onAddSurfaceClick);
+      svg.appendChild(addEl);
       document.getElementById('out').value = formatSnippet();
       applyRefTransform();
       persist();
@@ -408,9 +446,11 @@
       document.getElementById('layerColor').value = L.color;
     }
 
+    const VIEW_MODES = ['trace', 'wipe', 'ref-only', 'svg-only'];
+
     function setViewMode(mode) {
       viewMode = mode;
-      document.body.className = 'mode-' + mode;
+      VIEW_MODES.forEach((m) => document.body.classList.toggle('mode-' + m, m === mode));
       document.querySelectorAll('.modeBtn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
       document.getElementById('svgLayer').style.pointerEvents = mode === 'ref-only' ? 'none' : 'auto';
       render();
@@ -463,14 +503,27 @@
     };
 
     function setCanvas(patch) {
-      scene.canvas = { ...defaultScene.canvas, ...scene.canvas, ...patch };
+      const next = { ...defaultScene.canvas, ...scene.canvas, ...patch };
+      const c = clampCanvas(next.width, next.height);
+      scene.canvas = { ...next, width: c.width, height: c.height };
       syncCanvasPanel();
       render();
     }
-    document.getElementById('canvasW').onchange = e => setCanvas({ width: +e.target.value });
-    document.getElementById('canvasH').onchange = e => setCanvas({ height: +e.target.value });
+    function readCanvasInputs() {
+      setCanvas({
+        width: document.getElementById('canvasW').value,
+        height: document.getElementById('canvasH').value,
+      });
+    }
+    document.getElementById('applyCanvas').onclick = readCanvasInputs;
+    document.getElementById('canvasW').addEventListener('change', readCanvasInputs);
+    document.getElementById('canvasH').addEventListener('change', readCanvasInputs);
     document.getElementById('canvasFit').onchange = e => setCanvas({ fit: e.target.value });
-    document.getElementById('preset1400').onclick = () => setCanvas({ width: 1000, height: 1400 });
+    document.getElementById('preset1920').onclick = () => setCanvas({ width: 1080, height: 1920, fit: 'meet' });
+    document.getElementById('preset1400').onclick = () => setCanvas({ width: 1000, height: 1400, fit: 'slice' });
+    ['canvasW', 'canvasH'].forEach((id) => {
+      document.getElementById(id).addEventListener('wheel', (e) => e.preventDefault(), { passive: false });
+    });
     document.getElementById('canvasFromRef').onclick = () => {
       if (!refImg.naturalWidth) { alert('请先导入底图'); return; }
       setCanvas({ width: refImg.naturalWidth, height: refImg.naturalHeight, fit: 'meet' });
@@ -478,11 +531,13 @@
       touchRef({ fit: 'contain' });
     };
 
-    document.getElementById('toolMove').onclick = () => { editTool = 'move'; updateToolUi(); };
-    document.getElementById('toolAdd').onclick = () => { editTool = 'add'; updateToolUi(); };
+    document.getElementById('toolMove').onclick = () => { editTool = 'move'; updateToolUi(); render(); };
+    document.getElementById('toolAdd').onclick = () => { editTool = 'add'; updateToolUi(); render(); };
 
     function onAddSurfaceClick(e) {
       if (editTool !== 'add') return;
+      e.preventDefault();
+      e.stopPropagation();
       const p = svgPoint(e);
       insertPeak(scene.layers[layerIdx], pxToPeak(p.x, p.y, scene.layers[layerIdx]));
     }
@@ -528,6 +583,12 @@
       return m ? pt.matrixTransform(m) : { x: 0, y: 0 };
     }
     svg.addEventListener('pointerdown', e => {
+      if (editTool === 'add') {
+        e.preventDefault();
+        const p = svgPoint(e);
+        insertPeak(scene.layers[layerIdx], pxToPeak(p.x, p.y, scene.layers[layerIdx]));
+        return;
+      }
       const t = e.target;
       if (t.classList?.contains('handle')) {
         drag = { pi: +t.dataset.pi };
@@ -594,6 +655,8 @@
         document.getElementById('svgLayer').style.pointerEvents = 'auto';
       }
     });
+
+    VIEW_MODES.forEach((m, i) => document.body.classList.toggle('mode-' + m, i === 0));
 
     applyRefTransform();
     document.getElementById('wipePos').dispatchEvent(new Event('input'));
