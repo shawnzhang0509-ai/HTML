@@ -131,9 +131,10 @@
     <h3>0 · 画布 viewBox</h3>
     <label>宽 × 高（导出进 design）</label>
     <div class="row2">
-      <input type="number" id="canvasW" min="320" max="4096" step="1" value="1000" title="宽" />
-      <input type="number" id="canvasH" min="320" max="4096" step="1" value="1400" title="高" />
+      <input type="text" id="canvasW" inputmode="numeric" autocomplete="off" value="1000" title="宽" />
+      <input type="text" id="canvasH" inputmode="numeric" autocomplete="off" value="1400" title="高" />
     </div>
+    <p class="hint">输入数字后点「应用」；不要用滚轮（易变成 8 万+）</p>
     <button type="button" id="applyCanvas">应用上方宽高</button>
     <button type="button" id="preset1920">1080 × 1920（即梦竖图）</button>
     <button type="button" id="preset1400">1000 × 1400（Hero 竖版）</button>
@@ -182,7 +183,7 @@
       <button type="button" id="toolMove" class="active">移动/拖点</button>
       <button type="button" id="toolAdd">添加峰点</button>
     </div>
-    <p class="hint">移动：拖绿点 · 点<strong>脊线</strong>插入 · 双击绿点删除 · 添加模式：点画布任意位置</p>
+    <p class="hint">拖绿点调位置 · 按住 <span class="kbd">Shift</span> 只调高度 · 脊线点击插入 · 双击删除</p>
     <select id="layerPick"></select>
     <label>地平线 <span id="horizonVal"></span></label>
     <input id="horizon" type="range" min="0.42" max="0.62" step="0.001" />
@@ -202,7 +203,7 @@
     <p class="hint">快捷键：<span class="kbd">1-4</span> 切层 · <span class="kbd">A</span> 添加模式 · <span class="kbd">H</span> 底图 · <span class="kbd">Esc</span> 退出对齐/添加</p>
   </aside>
   <script>
-    const LS_KEY = 'wanaka-scene-trace-v3';
+    const LS_KEY = 'wanaka-scene-trace-v5';
 
     const defaultScene = {
       canvas: { width: 1000, height: 1400, fit: 'slice' },
@@ -233,10 +234,17 @@
     const refWrap = document.getElementById('refWrap');
     const refImg = document.getElementById('ref');
 
+    function parseDim(raw, fallback) {
+      const digits = String(raw ?? '').replace(/[^\d]/g, '');
+      const n = parseInt(digits, 10);
+      if (!Number.isFinite(n) || n < 320) return fallback;
+      return Math.min(8192, n);
+    }
+
     function clampCanvas(w, h) {
       return {
-        width: Math.min(8192, Math.max(320, Math.round(Number(w)) || 1000)),
-        height: Math.min(8192, Math.max(320, Math.round(Number(h)) || 1400)),
+        width: parseDim(w, 1000),
+        height: parseDim(h, 1400),
       };
     }
 
@@ -342,6 +350,27 @@
       const last = P[P.length - 1];
       d += ` L ${last.x.toFixed(0)} ${last.y.toFixed(0)} L ${W + 20} ${y0 + 2} L -20 ${y0 + 2} Z`;
       return d;
+    }
+
+    function ridgePathD(layer) {
+      return layer.peaks.map((p, i) => {
+        const pt = peakPx(p, layer);
+        return `${i ? 'L' : 'M'} ${pt.x} ${pt.y}`;
+      }).join(' ');
+    }
+
+    function refreshActiveLayerPaths() {
+      const layer = scene.layers[layerIdx];
+      const fill = svg.querySelector(`path.mountain-fill[data-layer="${layerIdx}"]`);
+      if (fill) fill.setAttribute('d', layerPath(layer));
+      const d = ridgePathD(layer);
+      svg.querySelector('.ridge-hit')?.setAttribute('d', d);
+      svg.querySelector('.ridge')?.setAttribute('d', d);
+      if (drag?.handleEl) {
+        const pt = peakPx(layer.peaks[drag.pi], layer);
+        drag.handleEl.setAttribute('cx', pt.x);
+        drag.handleEl.setAttribute('cy', pt.y);
+      }
     }
 
     function svgInner() {
@@ -510,20 +539,26 @@
       render();
     }
     function readCanvasInputs() {
-      setCanvas({
-        width: document.getElementById('canvasW').value,
-        height: document.getElementById('canvasH').value,
-      });
+      const c = clampCanvas(
+        document.getElementById('canvasW').value,
+        document.getElementById('canvasH').value,
+      );
+      document.getElementById('canvasW').value = c.width;
+      document.getElementById('canvasH').value = c.height;
+      setCanvas({ width: c.width, height: c.height });
     }
     document.getElementById('applyCanvas').onclick = readCanvasInputs;
-    document.getElementById('canvasW').addEventListener('change', readCanvasInputs);
-    document.getElementById('canvasH').addEventListener('change', readCanvasInputs);
     document.getElementById('canvasFit').onchange = e => setCanvas({ fit: e.target.value });
-    document.getElementById('preset1920').onclick = () => setCanvas({ width: 1080, height: 1920, fit: 'meet' });
-    document.getElementById('preset1400').onclick = () => setCanvas({ width: 1000, height: 1400, fit: 'slice' });
-    ['canvasW', 'canvasH'].forEach((id) => {
-      document.getElementById(id).addEventListener('wheel', (e) => e.preventDefault(), { passive: false });
-    });
+    document.getElementById('preset1920').onclick = () => {
+      document.getElementById('canvasW').value = '1080';
+      document.getElementById('canvasH').value = '1920';
+      setCanvas({ width: 1080, height: 1920, fit: 'meet' });
+    };
+    document.getElementById('preset1400').onclick = () => {
+      document.getElementById('canvasW').value = '1000';
+      document.getElementById('canvasH').value = '1400';
+      setCanvas({ width: 1000, height: 1400, fit: 'slice' });
+    };
     document.getElementById('canvasFromRef').onclick = () => {
       if (!refImg.naturalWidth) { alert('请先导入底图'); return; }
       setCanvas({ width: refImg.naturalWidth, height: refImg.naturalHeight, fit: 'meet' });
@@ -591,7 +626,12 @@
       }
       const t = e.target;
       if (t.classList?.contains('handle')) {
-        drag = { pi: +t.dataset.pi };
+        const pi = +t.dataset.pi;
+        drag = {
+          pi,
+          handleEl: t,
+          lockX: layer.peaks[pi].x,
+        };
         t.classList.add('active');
         t.setPointerCapture(e.pointerId);
         return;
