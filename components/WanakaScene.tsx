@@ -3,8 +3,7 @@ import { SCENE } from '@/lib/scene-config';
 import {
   layerFacets,
   layerPath,
-  SCENE_H,
-  SCENE_W,
+  sceneSize,
   viewBoxForVariant,
 } from '@/lib/scene-render';
 
@@ -37,8 +36,10 @@ function MountainLayer({ l }: { l: (typeof SCENE.layers)[number] }) {
 }
 
 export default function WanakaScene({ variant }: { variant: 'wide' | 'full' }) {
+  const { w: SCENE_W, h: SCENE_H } = sceneSize();
   const y0 = Math.round(SCENE_H * SCENE.horizon);
   const vb = viewBoxForVariant(variant);
+  const fit = SCENE.design?.fit ?? 'slice';
   const ty = SCENE_H * (SCENE.horizon - 0.02) - SCENE_H * SCENE.tree.size;
   const tx = SCENE.tree.x * SCENE_W;
   const treeH = SCENE_H * SCENE.tree.size * 0.55;
@@ -49,7 +50,7 @@ export default function WanakaScene({ variant }: { variant: 'wide' | 'full' }) {
     <svg
       xmlns="http://www.w3.org/2000/svg"
       viewBox={vb}
-      preserveAspectRatio="xMidYMid slice"
+      preserveAspectRatio={`xMidYMid ${fit}`}
       style={{ width: '100%', height: '100%', display: 'block' }}
     >
       <defs>

@@ -15,6 +15,8 @@ export type Layer = {
 export type ShootingStar = { x: number; y: number; len: number; angle?: number };
 
 export const SCENE = {
+  /** SVG viewBox，与 Scene Trace 画布一致；peaks 的 x/y 仍是 0–1 相对比例 */
+  design: { width: 1000, height: 1400, fit: 'slice' as 'slice' | 'meet' },
   horizon: 0.54,
   colors: {
     sky: '#062a4a',
