@@ -21,7 +21,7 @@
       position: absolute;
       inset: 0;
       pointer-events: none;
-      clip-path: inset(0 50% 0 0);
+      clip-path: inset(0 100% 0 0); /* 默认隐藏；仅「卷帘对比」模式用滑块裁切 */
     }
     #wipe svg { width: 100%; height: 100%; display: block; }
     #svgLayer { position: absolute; inset: 0; }
@@ -38,6 +38,8 @@
       display: none;
     }
     body.mode-wipe #wipeLine { display: block; }
+    body.mode-wipe #svgLayer .ref-image { visibility: hidden; }
+    body.mode-wipe #svgLayer .lake-ui { visibility: hidden; }
     body.mode-ref-only .mountain-fill,
     body.mode-ref-only .handle,
     body.mode-ref-only .ridge,
@@ -169,12 +171,13 @@
 
     <h3>2 · 视图</h3>
     <div class="row2">
-      <button type="button" data-mode="trace" class="modeBtn active">对照描边</button>
-      <button type="button" data-mode="wipe" class="modeBtn">卷帘对比</button>
-      <button type="button" data-mode="ref-only" class="modeBtn">仅底图</button>
-      <button type="button" data-mode="svg-only" class="modeBtn">仅矢量</button>
+      <button type="button" data-mode="trace" class="modeBtn active" title="底图半透明叠在矢量上，边描边看">对照描边</button>
+      <button type="button" data-mode="wipe" class="modeBtn" title="竖线左右分屏：左=即梦底图，右=纯矢量，查偏差">卷帘对比</button>
+      <button type="button" data-mode="ref-only" class="modeBtn" title="只看底图，方便对齐">仅底图</button>
+      <button type="button" data-mode="svg-only" class="modeBtn" title="不看底图，看全部山层叠加成品">仅矢量</button>
     </div>
-    <label>卷帘位置</label>
+    <p class="hint" id="viewModeHint">对照描边：整屏半透明底图 + 矢量，日常描峰点用这个。</p>
+    <label>卷帘位置（仅「卷帘对比」）</label>
     <input id="wipePos" type="range" min="0" max="100" step="0.5" value="50" />
     <label>矢量层透明度</label>
     <input id="vecOp" type="range" min="0" max="1" step="0.01" value="1" />
@@ -528,7 +531,8 @@
       return document.getElementById('soloLayer').checked;
     }
 
-    function svgInner() {
+    function svgInner(opts = {}) {
+      const { vectors = true } = opts;
       const H = getH(), W = getW();
       const y0 = Math.round(H * scene.horizon);
       const showLake = document.getElementById('showLake').checked;
@@ -596,7 +600,16 @@
       document.body.classList.toggle('tool-add', editTool === 'add');
       document.getElementById('toolMove').classList.toggle('active', editTool === 'move');
       document.getElementById('toolAdd').classList.toggle('active', editTool === 'add');
-      document.getElementById('toolHint').textContent = editTool === 'add'
+      const hint = document.getElementById('toolHint');
+      if (viewMode === 'svg-only') {
+        hint.textContent = `仅矢量 · ${scene.layers.length} 层叠加 · 绿点=当前层`;
+        return;
+      }
+      if (viewMode === 'wipe') {
+        hint.textContent = '卷帘：左原图 / 右矢量 · 拖侧栏「卷帘位置」移动竖线';
+        return;
+      }
+      hint.textContent = editTool === 'add'
         ? '添加模式：在画布点击放置新峰点'
         : '移动模式：拖绿点 · 点脊线插入 · 双击删除';
     }
@@ -653,14 +666,23 @@
 
     const VIEW_MODES = ['trace', 'wipe', 'ref-only', 'svg-only'];
 
+    const VIEW_MODE_HINTS = {
+      trace: '对照描边：整屏半透明底图叠在矢量上，拖绿点对齐即梦构图。',
+      wipe: '卷帘对比：竖线左=即梦原图，右=纯矢量（无底图），拖「卷帘位置」线扫过山体查偏差。',
+      'ref-only': '仅底图：隐藏矢量，专调底图位置/缩放/透明度。',
+      'svg-only': '仅矢量：隐藏底图，看全部山层叠加成品（与单层勾选无关）。',
+    };
+
     function setViewMode(mode) {
       viewMode = mode;
       VIEW_MODES.forEach((m) => document.body.classList.toggle('mode-' + m, m === mode));
       document.querySelectorAll('.modeBtn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
       document.getElementById('svgLayer').style.pointerEvents = mode === 'ref-only' ? 'none' : 'auto';
-      const hint = document.getElementById('toolHint');
-      if (mode === 'svg-only') {
-        hint.textContent = `仅矢量：${scene.layers.length} 层全部叠加 · 绿点仍属当前选中层`;
+      document.getElementById('viewModeHint').textContent = VIEW_MODE_HINTS[mode] || '';
+      if (mode === 'wipe') {
+        document.getElementById('wipePos').dispatchEvent(new Event('input'));
+      } else {
+        document.getElementById('wipe').style.clipPath = 'inset(0 100% 0 0)';
       }
       render();
     }
