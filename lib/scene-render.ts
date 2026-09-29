@@ -37,7 +37,8 @@ export function layerPath(l: Layer) {
 export type Facet = { d: string; fill: string };
 
 /**
- * 面片明暗：每个峰在左右谷点间成梯形，分界从峰顶斜切到基线（左上光源），避免峰正下方竖条。
+ * 面片明暗：按相邻两峰之间的「坡段」切亮/暗（左上光），交界从坡段左峰顶斜落到基线。
+ * 若按单峰切分，峰点过密时谷口太窄，split 会被夹到峰顶正下方 → 竖条栅栏。
  */
 export function layerFacets(l: Layer, baseColor: string): Facet[] {
   const { w, h } = sceneSize();
@@ -45,24 +46,65 @@ export function layerFacets(l: Layer, baseColor: string): Facet[] {
   const P = l.peaks.map((p) => peakToPx(p, l));
   const { facetLight, facetDark, facetRidgeSlope = 0.45 } = SCENE.render;
   const facets: Facet[] = [];
+  const y0s = y0.toFixed(1);
 
-  for (let i = 0; i < P.length; i++) {
-    const apex = P[i];
-    const vLx = i === 0 ? -20 : (P[i - 1].x + apex.x) / 2;
-    const vRx = i === P.length - 1 ? w + 20 : (apex.x + P[i + 1].x) / 2;
-    const drop = Math.max(8, apex.y - y0);
-    let splitX = apex.x - drop * facetRidgeSlope;
-    splitX = Math.max(vLx + 2, Math.min(vRx - 2, splitX));
-
+  function segmentFacets(
+    A: { x: number; y: number },
+    B: { x: number; y: number },
+    vLx: number,
+    vRx: number,
+  ) {
+    const dropA = Math.max(8, A.y - y0);
+    let footX = A.x - dropA * facetRidgeSlope;
+    footX = Math.max(vLx, Math.min(vRx, footX));
     facets.push({
-      d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${vLx.toFixed(1)} ${y0} L ${splitX.toFixed(1)} ${y0} Z`,
+      d: `M ${A.x.toFixed(1)} ${A.y.toFixed(1)} L ${B.x.toFixed(1)} ${B.y.toFixed(1)} L ${vRx.toFixed(1)} ${y0s} Z`,
       fill: shadeHex(baseColor, facetLight),
     });
     facets.push({
-      d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${splitX.toFixed(1)} ${y0} L ${vRx.toFixed(1)} ${y0} Z`,
+      d: `M ${A.x.toFixed(1)} ${A.y.toFixed(1)} L ${footX.toFixed(1)} ${y0s} L ${vLx.toFixed(1)} ${y0s} Z`,
       fill: shadeHex(baseColor, -facetDark),
     });
+    if (footX < vRx - 0.5) {
+      facets.push({
+        d: `M ${A.x.toFixed(1)} ${A.y.toFixed(1)} L ${vRx.toFixed(1)} ${y0s} L ${footX.toFixed(1)} ${y0s} Z`,
+        fill: shadeHex(baseColor, facetLight),
+      });
+    }
   }
+
+  if (P.length === 1) {
+    const apex = P[0];
+    const vLx = -20;
+    const vRx = w + 20;
+    const drop = Math.max(8, apex.y - y0);
+    let footX = apex.x - drop * facetRidgeSlope;
+    footX = Math.max(vLx, Math.min(vRx, footX));
+    facets.push({
+      d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${vRx.toFixed(1)} ${y0s} L ${footX.toFixed(1)} ${y0s} Z`,
+      fill: shadeHex(baseColor, facetLight),
+    });
+    facets.push({
+      d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${footX.toFixed(1)} ${y0s} L ${vLx.toFixed(1)} ${y0s} Z`,
+      fill: shadeHex(baseColor, -facetDark),
+    });
+    return facets;
+  }
+
+  for (let i = 0; i < P.length - 1; i++) {
+    const vLx = i === 0 ? -20 : (P[i - 1].x + P[i].x) / 2;
+    const vRx = (P[i].x + P[i + 1].x) / 2;
+    segmentFacets(P[i], P[i + 1], vLx, vRx);
+  }
+
+  const last = P[P.length - 1];
+  segmentFacets(
+    last,
+    { x: w + 20, y: last.y },
+    (P[P.length - 2].x + last.x) / 2,
+    w + 20,
+  );
+
   return facets;
 }
 

@@ -204,7 +204,7 @@
     <input id="facetContrast" type="range" min="0" max="0.3" step="0.01" value="0.14" />
     <label>明暗线斜率 <span id="facetSlopeVal"></span></label>
     <input id="facetSlope" type="range" min="0.15" max="0.85" step="0.01" value="0.45" />
-    <p class="hint">面片=每两个峰之间的<strong>整坡</strong>，明暗线沿坡走；峰点别过密，否则像栅栏。</p>
+    <p class="hint">面片按<strong>相邻两峰之间的坡段</strong>切亮/暗（不是每个峰顶竖切）；峰点过密仍会碎，适当删点或合并。</p>
     <label>地平线 <span id="horizonVal"></span></label>
     <input id="horizon" type="range" min="0.42" max="0.62" step="0.001" />
     <label>base / soft</label>
@@ -430,27 +430,58 @@
     function layerFacets(layer) {
       const H = getH(), W = getW();
       const y0 = H * scene.horizon;
+      const y0s = y0.toFixed(1);
       const P = layer.peaks.map((p) => peakPx(p, layer));
       const fl = scene.render?.facetLight ?? 0.14;
       const fd = scene.render?.facetDark ?? 0.12;
       const slope = scene.render?.facetRidgeSlope ?? 0.45;
       const out = [];
-      for (let i = 0; i < P.length; i++) {
-        const apex = P[i];
-        const vLx = i === 0 ? -20 : (P[i - 1].x + apex.x) / 2;
-        const vRx = i === P.length - 1 ? W + 20 : (apex.x + P[i + 1].x) / 2;
-        const drop = Math.max(8, apex.y - y0);
-        let splitX = apex.x - drop * slope;
-        splitX = Math.max(vLx + 2, Math.min(vRx - 2, splitX));
+
+      function segmentFacets(A, B, vLx, vRx) {
+        const dropA = Math.max(8, A.y - y0);
+        let footX = A.x - dropA * slope;
+        footX = Math.max(vLx, Math.min(vRx, footX));
         out.push({
-          d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${vLx.toFixed(1)} ${y0} L ${splitX.toFixed(1)} ${y0} Z`,
+          d: `M ${A.x.toFixed(1)} ${A.y.toFixed(1)} L ${B.x.toFixed(1)} ${B.y.toFixed(1)} L ${vRx.toFixed(1)} ${y0s} Z`,
           fill: shadeHex(layer.color, fl),
         });
         out.push({
-          d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${splitX.toFixed(1)} ${y0} L ${vRx.toFixed(1)} ${y0} Z`,
+          d: `M ${A.x.toFixed(1)} ${A.y.toFixed(1)} L ${footX.toFixed(1)} ${y0s} L ${vLx.toFixed(1)} ${y0s} Z`,
           fill: shadeHex(layer.color, -fd),
         });
+        if (footX < vRx - 0.5) {
+          out.push({
+            d: `M ${A.x.toFixed(1)} ${A.y.toFixed(1)} L ${vRx.toFixed(1)} ${y0s} L ${footX.toFixed(1)} ${y0s} Z`,
+            fill: shadeHex(layer.color, fl),
+          });
+        }
       }
+
+      if (P.length === 1) {
+        const apex = P[0];
+        const vLx = -20;
+        const vRx = W + 20;
+        const drop = Math.max(8, apex.y - y0);
+        let footX = apex.x - drop * slope;
+        footX = Math.max(vLx, Math.min(vRx, footX));
+        out.push({
+          d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${vRx.toFixed(1)} ${y0s} L ${footX.toFixed(1)} ${y0s} Z`,
+          fill: shadeHex(layer.color, fl),
+        });
+        out.push({
+          d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${footX.toFixed(1)} ${y0s} L ${vLx.toFixed(1)} ${y0s} Z`,
+          fill: shadeHex(layer.color, -fd),
+        });
+        return out;
+      }
+
+      for (let i = 0; i < P.length - 1; i++) {
+        const vLx = i === 0 ? -20 : (P[i - 1].x + P[i].x) / 2;
+        const vRx = (P[i].x + P[i + 1].x) / 2;
+        segmentFacets(P[i], P[i + 1], vLx, vRx);
+      }
+      const last = P[P.length - 1];
+      segmentFacets(last, { x: W + 20, y: last.y }, (P[P.length - 2].x + last.x) / 2, W + 20);
       return out;
     }
 
