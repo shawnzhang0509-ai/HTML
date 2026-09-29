@@ -203,14 +203,16 @@
     <label>层颜色</label>
     <input id="layerColor" type="color" />
 
-    <h3>4 · 导出</h3>
-    <button type="button" id="copyConfig" class="primary">复制 → scene-config.ts 片段</button>
-    <button type="button" id="exportJson">下载 scene.json（存档）</button>
-    <button type="button" id="importJson">从 JSON 恢复</button>
+    <h3>4 · 存档</h3>
+    <button type="button" id="saveProject" class="primary">保存 scene-workbench.json</button>
+    <button type="button" id="loadProject">读取 scene-workbench.json</button>
+    <p class="hint" id="saveStatus">用 <code>npm run dev</code> 打开时，保存到项目根目录（与 scene-studio.html 同文件夹）</p>
+    <button type="button" id="copyConfig">复制 → scene-config.ts 片段</button>
+    <button type="button" id="pickProjectFile">绑定本地文件…</button>
     <input id="jsonFile" type="file" accept="application/json,.json" hidden />
     <label>片段预览</label>
     <textarea id="out" readonly></textarea>
-    <p class="hint">快捷键：<span class="kbd">A</span> 添加峰点 · <span class="kbd">H</span> 底图 · <span class="kbd">Esc</span> 退出对齐</p>
+    <p class="hint">快捷键：<span class="kbd">Ctrl+S</span> 保存 · <span class="kbd">A</span> 峰点 · <span class="kbd">H</span> 底图</p>
   </aside>
   <script>
     const LS_KEY = 'wanaka-scene-trace-v8';
@@ -891,24 +893,126 @@
     });
 
     document.getElementById('copyConfig').onclick = () => navigator.clipboard.writeText(formatSnippet());
-    document.getElementById('exportJson').onclick = () => {
+
+    let fsFileHandle = null;
+    const WORKBENCH_NAME = 'scene-workbench.json';
+
+    function setSaveStatus(msg) {
+      document.getElementById('saveStatus').textContent = msg;
+    }
+
+    function sceneJson() {
+      return JSON.stringify(scene, null, 2);
+    }
+
+    async function saveProject() {
+      const body = sceneJson();
+      try {
+        const r = await fetch('/api/scene-workbench', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+        });
+        if (r.ok) {
+          setSaveStatus('已保存：' + WORKBENCH_NAME + '（项目根目录）');
+          flashHint('保存成功');
+          return;
+        }
+      } catch (_) { /* 非 dev 服务器 */ }
+
+      if (fsFileHandle && fsFileHandle.createWritable) {
+        const w = await fsFileHandle.createWritable();
+        await w.write(body);
+        await w.close();
+        setSaveStatus('已保存：' + fsFileHandle.name);
+        flashHint('保存成功');
+        return;
+      }
+
+      if (window.showSaveFilePicker) {
+        try {
+          fsFileHandle = await window.showSaveFilePicker({
+            suggestedName: WORKBENCH_NAME,
+            types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }],
+          });
+          const w = await fsFileHandle.createWritable();
+          await w.write(body);
+          await w.close();
+          setSaveStatus('已保存：' + fsFileHandle.name);
+          return;
+        } catch (_) { /* 用户取消 */ }
+      }
+
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([JSON.stringify(scene, null, 2)], { type: 'application/json' }));
-      a.download = `scene-trace-${Date.now()}.json`;
+      a.href = URL.createObjectURL(new Blob([body], { type: 'application/json' }));
+      a.download = WORKBENCH_NAME;
       a.click();
+      setSaveStatus('已下载 ' + WORKBENCH_NAME + '，请放到 HTML 项目文件夹');
+    }
+
+    async function loadProject(silent) {
+      try {
+        const r = await fetch('/api/scene-workbench');
+        if (r.ok) {
+          scene = JSON.parse(await r.text());
+          layerIdx = Math.min(layerIdx, scene.layers.length - 1);
+          render();
+          setSaveStatus('已读取：' + WORKBENCH_NAME);
+          if (!silent) flashHint('读取成功');
+          return true;
+        }
+      } catch (_) {}
+
+      if (fsFileHandle) {
+        const f = await fsFileHandle.getFile();
+        scene = JSON.parse(await f.text());
+        layerIdx = Math.min(layerIdx, scene.layers.length - 1);
+        render();
+        setSaveStatus('已读取：' + fsFileHandle.name);
+        return true;
+      }
+
+      if (!silent) document.getElementById('jsonFile').click();
+      return false;
+    }
+
+    document.getElementById('saveProject').onclick = () => saveProject();
+    document.getElementById('loadProject').onclick = () => loadProject(false);
+    document.getElementById('pickProjectFile').onclick = async () => {
+      if (!window.showOpenFilePicker) {
+        document.getElementById('jsonFile').click();
+        return;
+      }
+      try {
+        const [h] = await window.showOpenFilePicker({
+          types: [{ accept: { 'application/json': ['.json'] } }],
+        });
+        fsFileHandle = h;
+        const f = await h.getFile();
+        scene = JSON.parse(await f.text());
+        render();
+        setSaveStatus('已绑定：' + h.name + '（Ctrl+S 直接写此文件）');
+      } catch (_) {}
     };
-    document.getElementById('importJson').onclick = () => document.getElementById('jsonFile').click();
     document.getElementById('jsonFile').onchange = e => {
       const f = e.target.files?.[0];
       if (!f) return;
       const r = new FileReader();
       r.onload = () => {
-        try { scene = JSON.parse(r.result); render(); } catch (_) { alert('JSON 无效'); }
+        try {
+          scene = JSON.parse(r.result);
+          render();
+          setSaveStatus('已读取：' + f.name);
+        } catch (_) { alert('JSON 无效'); }
       };
       r.readAsText(f);
     };
 
     window.addEventListener('keydown', e => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        saveProject();
+      }
       if (e.key >= '1' && e.key <= '4') { layerIdx = +e.key - 1; document.getElementById('layerPick').value = String(layerIdx); render(); }
       if (e.key === 'h' || e.key === 'H') {
         const op = (scene.ref.opacity ?? 0.45) > 0.05 ? 0 : 0.45;
@@ -928,12 +1032,18 @@
 
     VIEW_MODES.forEach((m, i) => document.body.classList.toggle('mode-' + m, i === 0));
 
-    if (scene.ref?.dataUrl && !scene.ref.naturalW) loadRefFromDataUrl(scene.ref.dataUrl, scene.ref.opacity);
-    else {
-      applyRefTransform();
-      document.getElementById('wipePos').dispatchEvent(new Event('input'));
-      render();
+    async function bootstrap() {
+      const loaded = await loadProject(true);
+      if (!loaded) scene = loadScene();
+      if (scene.ref?.dataUrl && !scene.ref.naturalW) loadRefFromDataUrl(scene.ref.dataUrl, scene.ref.opacity);
+      else {
+        applyRefTransform();
+        document.getElementById('wipePos').dispatchEvent(new Event('input'));
+        render();
+      }
+      if (loaded) setSaveStatus('已自动加载 ' + WORKBENCH_NAME);
     }
+    bootstrap();
   </script>
 </body>
 </html>
