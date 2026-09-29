@@ -118,7 +118,7 @@
     <p class="hint">在本地仓库（如 <code>D:\工作\HTML</code>）<code>git pull</code> + <code>npm run dev</code> 打开本页。即梦出底图，你逐层描矢量，导出进 <code>scene-config.ts</code>。</p>
     <ol class="steps">
       <li>导入底图，对齐地平线/构图</li>
-      <li>单层模式：从远到近拖<strong>绿点</strong>；<strong>点白色脊线</strong>或「添加峰点」模式加点</li>
+      <li>对照描边可开<strong>单层模式</strong>只描当前层；<strong>仅矢量</strong>会始终叠全部层预览</li>
       <li>卷帘对比检查偏差</li>
       <li>复制片段 → 粘贴进 <code>lib/scene-config.ts</code></li>
     </ol>
@@ -178,7 +178,7 @@
     <input id="wipePos" type="range" min="0" max="100" step="0.5" value="50" />
     <label>矢量层透明度</label>
     <input id="vecOp" type="range" min="0" max="1" step="0.01" value="1" />
-    <label><input type="checkbox" id="soloLayer" checked /> 单层模式（其它层完全隐藏，非半透明）</label>
+    <label><input type="checkbox" id="soloLayer" checked /> 单层模式（仅对照/卷帘：隐藏其它层；<strong>仅矢量</strong>仍叠全部层）</label>
     <label><input type="checkbox" id="showLake" /> 显示湖/树（描山建议关；树图裂了见下方说明）</label>
 
     <h3>3 · 当前层 · 峰点</h3>
@@ -522,11 +522,17 @@
       }
     }
 
+    /** 仅矢量 = 成品预览，始终画出全部山层；单层勾选只影响对照/卷帘描边 */
+    function soloHideOtherLayers() {
+      if (viewMode === 'svg-only') return false;
+      return document.getElementById('soloLayer').checked;
+    }
+
     function svgInner() {
       const H = getH(), W = getW();
       const y0 = Math.round(H * scene.horizon);
       const showLake = document.getElementById('showLake').checked;
-      const solo = document.getElementById('soloLayer').checked;
+      const solo = soloHideOtherLayers();
       const ty = H * (scene.horizon - 0.02) - H * scene.tree.size;
       const tx = scene.tree.x * W;
       const ts = H * scene.tree.size * 0.55;
@@ -652,6 +658,10 @@
       VIEW_MODES.forEach((m) => document.body.classList.toggle('mode-' + m, m === mode));
       document.querySelectorAll('.modeBtn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
       document.getElementById('svgLayer').style.pointerEvents = mode === 'ref-only' ? 'none' : 'auto';
+      const hint = document.getElementById('toolHint');
+      if (mode === 'svg-only') {
+        hint.textContent = `仅矢量：${scene.layers.length} 层全部叠加 · 绿点仍属当前选中层`;
+      }
       render();
     }
 
