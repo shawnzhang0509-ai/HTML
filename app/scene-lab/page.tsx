@@ -8,8 +8,15 @@ export default function SceneLab() {
       <div style={{ position: 'absolute', inset: 0 }}>
         <WanakaScene variant="full" />
       </div>
-      <p style={{ position: 'absolute', top: 12, left: 14, color: 'rgba(255,255,255,.55)',
-                  font: '13px system-ui' }}>
+      <p
+        style={{
+          position: 'absolute',
+          top: 12,
+          left: 14,
+          color: 'rgba(255,255,255,.55)',
+          font: '13px system-ui',
+        }}
+      >
         /scene-lab · 改 lib/scene-config.ts 此处即时更新 · 满意后 git commit
       </p>
     </main>

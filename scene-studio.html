@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scene Trace — 底图对照编辑器</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 13px/1.45 system-ui, sans-serif;
+      background: #0b2238;
+      color: #e8eef4;
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      height: 100vh;
+    }
+    #stage { position: relative; overflow: hidden; background: #062a4a; }
+    #refWrap {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      transform-origin: center center;
+    }
+    #refWrap.align-mode { pointer-events: auto; cursor: grab; }
+    #refWrap.align-mode:active { cursor: grabbing; }
+    #ref {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      opacity: 0.45;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+    #ref.contain { object-fit: contain; }
+    #wipe {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      clip-path: inset(0 50% 0 0);
+    }
+    #wipe svg { width: 100%; height: 100%; display: block; }
+    #svgLayer { position: absolute; inset: 0; }
+    #svgLayer svg { width: 100%; height: 100%; display: block; }
+    #wipeLine {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 2px;
+      background: rgba(255, 220, 120, 0.85);
+      box-shadow: 0 0 8px rgba(0,0,0,.4);
+      pointer-events: none;
+      display: none;
+    }
+    body.mode-wipe #wipeLine { display: block; }
+    body.mode-ref-only #svgLayer { opacity: 0; }
+    body.mode-svg-only #refWrap { opacity: 0; }
+    aside { overflow-y: auto; padding: 12px 14px; border-left: 1px solid #1e3a55; background: #0f2a42; }
+    h2 { margin: 0 0 6px; font-size: 15px; }
+    h3 { margin: 14px 0 6px; font-size: 12px; color: #9cb8d4; text-transform: uppercase; letter-spacing: .04em; }
+    label { display: block; margin: 8px 0 4px; color: #9cb8d4; }
+    input[type=range] { width: 100%; }
+    input[type=color] { width: 100%; height: 28px; border: none; padding: 0; background: transparent; }
+    select, button {
+      width: 100%;
+      margin: 4px 0;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid #2a5070;
+      background: #14324d;
+      color: inherit;
+      cursor: pointer;
+    }
+    button.primary { background: #1a5a8a; border-color: #2a7ab0; }
+    button.active { outline: 2px solid #5fd068; }
+    .hint { color: #7a9bb8; font-size: 12px; margin: 6px 0 10px; line-height: 1.5; }
+    .steps { color: #b8d4ea; font-size: 12px; padding-left: 1.1em; margin: 0 0 10px; }
+    .steps li { margin: 4px 0; }
+    textarea {
+      width: 100%;
+      height: 100px;
+      font: 11px/1.35 ui-monospace, monospace;
+      background: #081c2e;
+      color: #b8d4ea;
+      border: 1px solid #2a5070;
+      border-radius: 6px;
+      padding: 8px;
+    }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .row2 button { margin: 0; }
+    .handle { fill: #5fd068; stroke: #0a2f18; stroke-width: 2; cursor: grab; }
+    .handle.active { fill: #fff; }
+    .ridge { fill: none; stroke: rgba(255,255,255,.55); stroke-width: 2; pointer-events: none; }
+    .ridge-hit { fill: none; stroke: transparent; stroke-width: 28; pointer-events: stroke; cursor: crosshair; }
+    .mountain-fill { pointer-events: none; }
+    .add-surface { fill: rgba(0,0,0,0); cursor: crosshair; display: none; }
+    body.tool-add .add-surface { display: block; }
+    #toolHint { position: absolute; left: 12px; bottom: 12px; padding: 8px 10px; background: rgba(0,0,0,.55); border-radius: 8px; font-size: 12px; color: #cde; pointer-events: none; }
+    .horizon-guide { stroke: #ff6b6b; stroke-width: 1.5; stroke-dasharray: 6 4; pointer-events: none; }
+    .layer-dim { opacity: 0.12; }
+    .kbd { font: 11px ui-monospace, monospace; background: #081c2e; padding: 1px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body class="mode-trace">
+  <div id="stage">
+    <div id="refWrap">
+      <img id="ref" alt="参考底图" />
+    </div>
+    <div id="wipe"><svg id="svgWipe" viewBox="0 0 1000 1400" preserveAspectRatio="xMidYMid slice"></svg></div>
+    <div id="svgLayer"><svg id="svg" viewBox="0 0 1000 1400" preserveAspectRatio="xMidYMid slice"></svg></div>
+    <div id="wipeLine"></div>
+    <div id="toolHint"></div>
+  </div>
+  <aside>
+    <h2>Scene Trace</h2>
+    <p class="hint">二次人工介入工具：AI/即梦只提供<strong>底图</strong>，你在矢量层上<strong>对照描</strong>，满意后导出数字进仓库。不追求自动生成。</p>
+    <ol class="steps">
+      <li>导入底图，对齐地平线/构图</li>
+      <li>单层模式：从远到近拖<strong>绿点</strong>；<strong>点白色脊线</strong>或「添加峰点」模式加点</li>
+      <li>卷帘对比检查偏差</li>
+      <li>复制片段 → 粘贴进 <code>lib/scene-config.ts</code></li>
+    </ol>
+
+    <h3>0 · 画布 viewBox</h3>
+    <label>宽 × 高（导出进 design）</label>
+    <div class="row2">
+      <input type="number" id="canvasW" min="320" max="4096" step="1" value="1000" title="宽" />
+      <input type="number" id="canvasH" min="320" max="4096" step="1" value="1400" title="高" />
+    </div>
+    <button type="button" id="preset1400">预设 1000×1400 竖版</button>
+    <button type="button" id="canvasFromRef">画布 = 底图像素尺寸</button>
+    <label>SVG 适配</label>
+    <select id="canvasFit">
+      <option value="slice">slice — 同 Hero 裁切</option>
+      <option value="meet">meet — 整画布可见</option>
+    </select>
+    <p class="hint" id="refSizeHint">底图尺寸：—</p>
+
+    <h3>1 · 底图</h3>
+    <input id="refFile" type="file" accept="image/*" />
+    <button type="button" id="loadSample">加载仓库示例底图</button>
+    <label>底图透明度 <span id="refOpVal"></span></label>
+    <input id="refOp" type="range" min="0" max="1" step="0.01" value="0.45" />
+    <label>适配 <span class="hint">(与线上一致用 cover)</span></label>
+    <select id="refFit">
+      <option value="cover">cover — 同 Hero 裁切</option>
+      <option value="contain">contain — 整图可见</option>
+    </select>
+    <label><input type="checkbox" id="alignMode" /> 底图对齐模式（拖底图 / 滚轮缩放）</label>
+    <label>底图 X 偏移</label>
+    <input id="refDx" type="range" min="-200" max="200" step="1" value="0" />
+    <label>底图 Y 偏移</label>
+    <input id="refDy" type="range" min="-200" max="200" step="1" value="0" />
+    <label>底图缩放</label>
+    <input id="refScale" type="range" min="0.7" max="1.4" step="0.005" value="1" />
+
+    <h3>2 · 视图</h3>
+    <div class="row2">
+      <button type="button" data-mode="trace" class="modeBtn active">对照描边</button>
+      <button type="button" data-mode="wipe" class="modeBtn">卷帘对比</button>
+      <button type="button" data-mode="ref-only" class="modeBtn">仅底图</button>
+      <button type="button" data-mode="svg-only" class="modeBtn">仅矢量</button>
+    </div>
+    <label>卷帘位置</label>
+    <input id="wipePos" type="range" min="0" max="100" step="0.5" value="50" />
+    <label>矢量层透明度</label>
+    <input id="vecOp" type="range" min="0" max="1" step="0.01" value="1" />
+    <label><input type="checkbox" id="soloLayer" checked /> 单层模式（只显示当前层）</label>
+    <label><input type="checkbox" id="showLake" checked /> 显示湖/树（描山时可关）</label>
+
+    <h3>3 · 当前层 · 峰点</h3>
+    <div class="row2">
+      <button type="button" id="toolMove" class="active">移动/拖点</button>
+      <button type="button" id="toolAdd">添加峰点</button>
+    </div>
+    <p class="hint">移动：拖绿点 · 点<strong>脊线</strong>插入 · 双击绿点删除 · 添加模式：点画布任意位置</p>
+    <select id="layerPick"></select>
+    <label>地平线 <span id="horizonVal"></span></label>
+    <input id="horizon" type="range" min="0.42" max="0.62" step="0.001" />
+    <label>base / soft</label>
+    <input id="base" type="range" min="0" max="55" step="1" />
+    <input id="soft" type="range" min="0" max="1" step="0.01" />
+    <label>层颜色</label>
+    <input id="layerColor" type="color" />
+
+    <h3>4 · 导出</h3>
+    <button type="button" id="copyConfig" class="primary">复制 → scene-config.ts 片段</button>
+    <button type="button" id="exportJson">下载 scene.json（存档）</button>
+    <button type="button" id="importJson">从 JSON 恢复</button>
+    <input id="jsonFile" type="file" accept="application/json,.json" hidden />
+    <label>片段预览</label>
+    <textarea id="out" readonly></textarea>
+    <p class="hint">快捷键：<span class="kbd">1-4</span> 切层 · <span class="kbd">A</span> 添加模式 · <span class="kbd">H</span> 底图 · <span class="kbd">Esc</span> 退出对齐/添加</p>
+  </aside>
+  <script>
+    const LS_KEY = 'wanaka-scene-trace-v3';
+
+    const defaultScene = {
+      canvas: { width: 1000, height: 1400, fit: 'slice' },
+      horizon: 0.54,
+      colors: { sky: '#062a4a', lake: '#0a5083', lakedeep: '#062a4a', band: '#2a6ea0' },
+      tree: { x: 0.33, size: 0.15, src: '/tree.svg' },
+      ref: { dx: 0, dy: 0, scale: 1, fit: 'cover', opacity: 0.45, dataUrl: '' },
+      layers: [
+        { color: '#b8d4ea', cssVar: '--m1', base: 0, soft: 0, peaks: [{x:0,y:.55},{x:.18,y:.48},{x:.38,y:.52},{x:.58,y:.5},{x:.8,y:.54},{x:1,y:.58}] },
+        { color: '#5a8fc0', cssVar: '--m2', base: 10, soft: 0, peaks: [{x:0,y:.38},{x:.24,y:.32},{x:.5,y:.34},{x:.78,y:.36},{x:1,y:.4}] },
+        { color: '#2d5f8f', cssVar: '--m3', base: 22, soft: 0, peaks: [{x:0,y:.22},{x:.3,y:.18},{x:.6,y:.2},{x:1,y:.32}] },
+        { color: '#0f2844', cssVar: '--m4', base: 36, soft: 0, peaks: [{x:0,y:.08},{x:.36,y:.06},{x:.72,y:.1},{x:1,y:.14}] },
+      ],
+    };
+
+    let scene = loadScene();
+    let layerIdx = 3;
+    let drag = null;
+    let refDrag = null;
+    let viewMode = 'trace';
+    let editTool = 'move';
+
+    function getW() { return scene.canvas?.width ?? 1000; }
+    function getH() { return scene.canvas?.height ?? 1400; }
+
+    const svg = document.getElementById('svg');
+    const svgWipe = document.getElementById('svgWipe');
+    const refWrap = document.getElementById('refWrap');
+    const refImg = document.getElementById('ref');
+
+    function loadScene() {
+      try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (raw) return JSON.parse(raw);
+      } catch (_) {}
+      return structuredClone(defaultScene);
+    }
+    function persist() {
+      localStorage.setItem(LS_KEY, JSON.stringify(scene));
+    }
+
+    function applyRefTransform() {
+      const r = scene.ref || defaultScene.ref;
+      refWrap.style.transform = `translate(${r.dx}px, ${r.dy}px) scale(${r.scale})`;
+      refImg.style.opacity = r.opacity ?? 0.45;
+      refImg.classList.toggle('contain', r.fit === 'contain');
+      document.getElementById('refOp').value = r.opacity ?? 0.45;
+      document.getElementById('refOpVal').textContent = (r.opacity ?? 0.45).toFixed(2);
+      document.getElementById('refDx').value = r.dx;
+      document.getElementById('refDy').value = r.dy;
+      document.getElementById('refScale').value = r.scale;
+      document.getElementById('refFit').value = r.fit || 'cover';
+      if (r.dataUrl) refImg.src = r.dataUrl;
+      updateRefSizeHint();
+    }
+
+    function updateViewBox() {
+      const fit = scene.canvas?.fit || 'slice';
+      const vb = `0 0 ${getW()} ${getH()}`;
+      const par = `xMidYMid ${fit}`;
+      svg.setAttribute('viewBox', vb);
+      svg.setAttribute('preserveAspectRatio', par);
+      svgWipe.setAttribute('viewBox', vb);
+      svgWipe.setAttribute('preserveAspectRatio', par);
+    }
+
+    function syncCanvasPanel() {
+      if (!scene.canvas) scene.canvas = { ...defaultScene.canvas };
+      document.getElementById('canvasW').value = getW();
+      document.getElementById('canvasH').value = getH();
+      document.getElementById('canvasFit').value = scene.canvas.fit || 'slice';
+      updateViewBox();
+    }
+
+    function updateRefSizeHint() {
+      const el = document.getElementById('refSizeHint');
+      const nw = refImg.naturalWidth, nh = refImg.naturalHeight;
+      el.textContent = nw ? `底图尺寸：${nw} × ${nh} px` : '底图尺寸：—';
+    }
+
+    refImg.addEventListener('load', updateRefSizeHint);
+
+    function insertPeak(layer, np) {
+      let ins = layer.peaks.length;
+      for (let i = 0; i < layer.peaks.length - 1; i++) {
+        if (np.x > layer.peaks[i].x && np.x < layer.peaks[i + 1].x) { ins = i + 1; break; }
+      }
+      layer.peaks.splice(ins, 0, np);
+      render();
+    }
+
+    function peakPx(p, layer) {
+      const H = getH(), W = getW();
+      const y = (scene.horizon - 0.05 - p.y * (scene.horizon - 0.16)) * H - layer.base * 6;
+      return { x: p.x * W, y };
+    }
+    function pxToPeak(x, y, layer) {
+      const H = getH(), W = getW();
+      const py = (scene.horizon - 0.05 - (y + layer.base * 6) / H) / (scene.horizon - 0.16);
+      return { x: Math.min(1, Math.max(0, x / W)), y: Math.min(1, Math.max(0, py)) };
+    }
+    function layerPath(layer) {
+      const H = getH(), W = getW();
+      const y0 = H * scene.horizon;
+      const P = layer.peaks.map(p => peakPx(p, layer));
+      let d = `M-20 ${P[0].y.toFixed(0)}`;
+      for (let i = 0; i < P.length - 1; i++) {
+        const a = P[i], b = P[i + 1];
+        if (layer.soft > 0.02)
+          d += ` Q ${a.x.toFixed(0)} ${a.y.toFixed(0)} ${((a.x + b.x) / 2).toFixed(0)} ${((a.y + b.y) / 2).toFixed(0)}`;
+        else d += ` L ${a.x.toFixed(0)} ${a.y.toFixed(0)}`;
+      }
+      const last = P[P.length - 1];
+      d += ` L ${last.x.toFixed(0)} ${last.y.toFixed(0)} L ${W + 20} ${y0 + 2} L -20 ${y0 + 2} Z`;
+      return d;
+    }
+
+    function svgInner() {
+      const H = getH(), W = getW();
+      const y0 = Math.round(H * scene.horizon);
+      const showLake = document.getElementById('showLake').checked;
+      const solo = document.getElementById('soloLayer').checked;
+      const ty = H * (scene.horizon - 0.02) - H * scene.tree.size;
+      const tx = scene.tree.x * W;
+      const ts = H * scene.tree.size * 0.55;
+      const layers = scene.layers.map((l, i) => {
+        const dim = solo && i !== layerIdx;
+        const cls = dim ? 'layer-dim' : '';
+        const op = dim ? '' : '';
+        return `<path class="mountain-fill ${cls}" data-layer="${i}" d="${layerPath(l)}" fill="${l.color}" ${dim ? 'opacity="0.15"' : ''}/>`;
+      }).join('');
+      const lake = showLake ? `
+        <rect x="0" y="${y0}" width="${W}" height="${H - y0}" fill="${scene.colors.lake}"/>
+        <rect x="0" y="${y0 - 2}" width="${W}" height="3" fill="${scene.colors.band}" opacity="0.45"/>
+        <image href="${scene.tree.src}" x="${tx}" y="${ty}" width="${ts * 0.58}" height="${ts}"/>
+      ` : '';
+      const hz = `<line class="horizon-guide" x1="0" y1="${y0}" x2="${W}" y2="${y0}"/>`;
+      return `${lake}${layers}${hz}<g id="handles"></g>`;
+    }
+
+    function mountHandles(g) {
+      if (viewMode === 'ref-only' || viewMode === 'wipe') return;
+      const layer = scene.layers[layerIdx];
+      const ridgeD = layer.peaks.map((p, i) => {
+        const pt = peakPx(p, layer);
+        return `${i ? 'L' : 'M'} ${pt.x} ${pt.y}`;
+      }).join(' ');
+      const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      hit.setAttribute('class', 'ridge-hit');
+      hit.setAttribute('d', ridgeD);
+      g.appendChild(hit);
+      const ridge = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      ridge.setAttribute('class', 'ridge');
+      ridge.setAttribute('d', ridgeD);
+      g.appendChild(ridge);
+      layer.peaks.forEach((p, pi) => {
+        const { x, y } = peakPx(p, layer);
+        const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        c.setAttribute('class', 'handle');
+        c.setAttribute('data-pi', String(pi));
+        c.setAttribute('cx', x);
+        c.setAttribute('cy', y);
+        c.setAttribute('r', '9');
+        g.appendChild(c);
+      });
+    }
+
+    function updateToolUi() {
+      document.body.classList.toggle('tool-add', editTool === 'add');
+      document.getElementById('toolMove').classList.toggle('active', editTool === 'move');
+      document.getElementById('toolAdd').classList.toggle('active', editTool === 'add');
+      document.getElementById('toolHint').textContent = editTool === 'add'
+        ? '添加模式：在画布点击放置新峰点'
+        : '移动模式：拖绿点 · 点脊线插入 · 双击删除';
+    }
+
+    function render() {
+      if (!scene.canvas) scene.canvas = { ...defaultScene.canvas };
+      syncCanvasPanel();
+      const inner = svgInner();
+      svg.innerHTML = inner;
+      svgWipe.innerHTML = inner.replace(/<g id="handles"><\/g>/, '').replace(/<rect class="add-surface"[^/]*\/>/, '');
+      mountHandles(svg.querySelector('#handles'));
+      const addEl = svg.querySelector('#addSurface');
+      if (addEl) addEl.addEventListener('pointerdown', onAddSurfaceClick);
+      document.getElementById('out').value = formatSnippet();
+      applyRefTransform();
+      persist();
+      syncPanel();
+      updateToolUi();
+    }
+
+    function formatSnippet() {
+      const layers = scene.layers.map(l => {
+        const peaks = l.peaks.map(p => `{x:${p.x.toFixed(3)},y:${p.y.toFixed(3)}}`).join(', ');
+        return `    { color: '${l.color}', cssVar: '${l.cssVar}', base: ${l.base}, soft: ${l.soft.toFixed(2)}, peaks: [ ${peaks} ] }`;
+      }).join(',\n');
+      const fit = scene.canvas?.fit || 'slice';
+      return `  design: { width: ${getW()}, height: ${getH()}, fit: '${fit}' },\n  horizon: ${scene.horizon.toFixed(3)},\n  layers: [\n${layers}\n  ],`;
+    }
+
+    function syncPanel() {
+      document.getElementById('horizon').value = scene.horizon;
+      document.getElementById('horizonVal').textContent = scene.horizon.toFixed(3);
+      const L = scene.layers[layerIdx];
+      document.getElementById('base').value = L.base;
+      document.getElementById('soft').value = L.soft;
+      document.getElementById('layerColor').value = L.color;
+    }
+
+    function setViewMode(mode) {
+      viewMode = mode;
+      document.body.className = 'mode-' + mode;
+      document.querySelectorAll('.modeBtn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+      document.getElementById('svgLayer').style.pointerEvents = mode === 'ref-only' ? 'none' : 'auto';
+      render();
+    }
+
+    scene.layers.forEach((l, i) => {
+      const o = document.createElement('option');
+      o.value = i;
+      o.textContent = `层 ${i + 1} ${l.cssVar}（${i === 0 ? '最远' : i === 3 ? '最近' : '中景'}）`;
+      document.getElementById('layerPick').appendChild(o);
+    });
+    document.getElementById('layerPick').value = String(layerIdx);
+    document.getElementById('layerPick').onchange = e => { layerIdx = +e.target.value; render(); };
+
+    document.querySelectorAll('.modeBtn').forEach(btn => {
+      btn.onclick = () => setViewMode(btn.dataset.mode);
+    });
+
+    ['horizon','base','soft'].forEach(id => {
+      document.getElementById(id).oninput = e => {
+        const v = +e.target.value;
+        if (id === 'horizon') scene.horizon = v;
+        else if (id === 'base') scene.layers[layerIdx].base = v;
+        else scene.layers[layerIdx].soft = v;
+        render();
+      };
+    });
+    document.getElementById('layerColor').oninput = e => { scene.layers[layerIdx].color = e.target.value; render(); };
+
+    function touchRef(patch) {
+      scene.ref = { ...defaultScene.ref, ...scene.ref, ...patch };
+      applyRefTransform();
+      persist();
+    }
+    document.getElementById('refOp').oninput = e => touchRef({ opacity: +e.target.value });
+    document.getElementById('refDx').oninput = e => touchRef({ dx: +e.target.value });
+    document.getElementById('refDy').oninput = e => touchRef({ dy: +e.target.value });
+    document.getElementById('refScale').oninput = e => touchRef({ scale: +e.target.value });
+    document.getElementById('refFit').onchange = e => touchRef({ fit: e.target.value });
+
+    document.getElementById('refFile').onchange = e => {
+      const f = e.target.files?.[0];
+      if (!f) return;
+      const r = new FileReader();
+      r.onload = () => touchRef({ dataUrl: r.result, opacity: 0.45 });
+      r.readAsDataURL(f);
+    };
+    document.getElementById('loadSample').onclick = () => {
+      touchRef({ dataUrl: '/reference-sample.png', opacity: 0.45 });
+    };
+
+    function setCanvas(patch) {
+      scene.canvas = { ...defaultScene.canvas, ...scene.canvas, ...patch };
+      syncCanvasPanel();
+      render();
+    }
+    document.getElementById('canvasW').onchange = e => setCanvas({ width: +e.target.value });
+    document.getElementById('canvasH').onchange = e => setCanvas({ height: +e.target.value });
+    document.getElementById('canvasFit').onchange = e => setCanvas({ fit: e.target.value });
+    document.getElementById('preset1400').onclick = () => setCanvas({ width: 1000, height: 1400 });
+    document.getElementById('canvasFromRef').onclick = () => {
+      if (!refImg.naturalWidth) { alert('请先导入底图'); return; }
+      setCanvas({ width: refImg.naturalWidth, height: refImg.naturalHeight, fit: 'meet' });
+      document.getElementById('refFit').value = 'contain';
+      touchRef({ fit: 'contain' });
+    };
+
+    document.getElementById('toolMove').onclick = () => { editTool = 'move'; updateToolUi(); };
+    document.getElementById('toolAdd').onclick = () => { editTool = 'add'; updateToolUi(); };
+
+    function onAddSurfaceClick(e) {
+      if (editTool !== 'add') return;
+      const p = svgPoint(e);
+      insertPeak(scene.layers[layerIdx], pxToPeak(p.x, p.y, scene.layers[layerIdx]));
+    }
+
+    document.getElementById('alignMode').onchange = e => {
+      refWrap.classList.toggle('align-mode', e.target.checked);
+      document.getElementById('svgLayer').style.pointerEvents = e.target.checked ? 'none' : 'auto';
+    };
+    refWrap.addEventListener('pointerdown', e => {
+      if (!document.getElementById('alignMode').checked) return;
+      refDrag = { x: e.clientX, y: e.clientY, dx: scene.ref.dx, dy: scene.ref.dy };
+      refWrap.setPointerCapture(e.pointerId);
+    });
+    refWrap.addEventListener('pointermove', e => {
+      if (!refDrag) return;
+      touchRef({ dx: refDrag.dx + (e.clientX - refDrag.x), dy: refDrag.dy + (e.clientY - refDrag.y) });
+    });
+    refWrap.addEventListener('pointerup', () => { refDrag = null; });
+    refWrap.addEventListener('wheel', e => {
+      if (!document.getElementById('alignMode').checked) return;
+      e.preventDefault();
+      const s = Math.min(1.4, Math.max(0.7, (scene.ref.scale || 1) - e.deltaY * 0.001));
+      touchRef({ scale: s });
+      document.getElementById('refScale').value = s;
+    }, { passive: false });
+
+    document.getElementById('wipePos').oninput = e => {
+      const p = +e.target.value;
+      document.getElementById('wipe').style.clipPath = `inset(0 ${100 - p}% 0 0)`;
+      document.getElementById('wipeLine').style.left = p + '%';
+    };
+    document.getElementById('vecOp').oninput = e => {
+      document.getElementById('svgLayer').style.opacity = e.target.value;
+    };
+    document.getElementById('soloLayer').onchange = () => render();
+    document.getElementById('showLake').onchange = () => render();
+
+    function svgPoint(evt) {
+      const pt = svg.createSVGPoint();
+      pt.x = evt.clientX;
+      pt.y = evt.clientY;
+      const m = svg.getScreenCTM()?.inverse();
+      return m ? pt.matrixTransform(m) : { x: 0, y: 0 };
+    }
+    svg.addEventListener('pointerdown', e => {
+      const t = e.target;
+      if (t.classList?.contains('handle')) {
+        drag = { pi: +t.dataset.pi };
+        t.classList.add('active');
+        t.setPointerCapture(e.pointerId);
+        return;
+      }
+      if (t.classList?.contains('ridge-hit')) {
+        const p = svgPoint(e);
+        insertPeak(scene.layers[layerIdx], pxToPeak(p.x, p.y, scene.layers[layerIdx]));
+      }
+    });
+    svg.addEventListener('pointermove', e => {
+      if (!drag) return;
+      const p = svgPoint(e);
+      const layer = scene.layers[layerIdx];
+      layer.peaks[drag.pi] = pxToPeak(p.x, p.y, layer);
+      layer.peaks.sort((a, b) => a.x - b.x);
+      render();
+    });
+    svg.addEventListener('pointerup', () => { drag = null; });
+    svg.addEventListener('dblclick', e => {
+      const t = e.target;
+      if (!t.classList?.contains('handle')) return;
+      const layer = scene.layers[layerIdx];
+      if (layer.peaks.length <= 3) return;
+      layer.peaks.splice(+t.dataset.pi, 1);
+      render();
+    });
+
+    document.getElementById('copyConfig').onclick = () => navigator.clipboard.writeText(formatSnippet());
+    document.getElementById('exportJson').onclick = () => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(scene, null, 2)], { type: 'application/json' }));
+      a.download = `scene-trace-${Date.now()}.json`;
+      a.click();
+    };
+    document.getElementById('importJson').onclick = () => document.getElementById('jsonFile').click();
+    document.getElementById('jsonFile').onchange = e => {
+      const f = e.target.files?.[0];
+      if (!f) return;
+      const r = new FileReader();
+      r.onload = () => {
+        try { scene = JSON.parse(r.result); render(); } catch (_) { alert('JSON 无效'); }
+      };
+      r.readAsText(f);
+    };
+
+    window.addEventListener('keydown', e => {
+      if (e.key >= '1' && e.key <= '4') { layerIdx = +e.key - 1; document.getElementById('layerPick').value = String(layerIdx); render(); }
+      if (e.key === 'h' || e.key === 'H') {
+        const op = (scene.ref.opacity ?? 0.45) > 0.05 ? 0 : 0.45;
+        touchRef({ opacity: op });
+        render();
+      }
+      if (e.key === '[') touchRef({ opacity: Math.max(0, (scene.ref.opacity ?? 0.45) - 0.05) });
+      if (e.key === ']') touchRef({ opacity: Math.min(1, (scene.ref.opacity ?? 0.45) + 0.05) });
+      if (e.key === 'a' || e.key === 'A') { editTool = editTool === 'add' ? 'move' : 'add'; updateToolUi(); }
+      if (e.key === 'Escape') {
+        editTool = 'move';
+        updateToolUi();
+        document.getElementById('alignMode').checked = false;
+        refWrap.classList.remove('align-mode');
+        document.getElementById('svgLayer').style.pointerEvents = 'auto';
+      }
+    });
+
+    applyRefTransform();
+    document.getElementById('wipePos').dispatchEvent(new Event('input'));
+    render();
+  </script>
+</body>
+</html>
