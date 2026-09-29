@@ -80,15 +80,14 @@
     }
     .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
     .row2 button { margin: 0; }
-    .handle { fill: #5fd068; stroke: #0a2f18; stroke-width: 2; cursor: grab; }
+    .handle { fill: #5fd068; stroke: #0a2f18; stroke-width: 2; cursor: grab; pointer-events: all; }
     .handle.active { fill: #fff; }
     .ridge { fill: none; stroke: rgba(255,255,255,.55); stroke-width: 2; pointer-events: none; }
-    .ridge-hit { fill: none; stroke: transparent; stroke-width: 28; pointer-events: stroke; cursor: crosshair; }
+    .ridge-hit { fill: none; stroke: transparent; stroke-width: 28; pointer-events: none; }
     .mountain-fill { pointer-events: none; }
     .add-surface { fill: transparent; cursor: crosshair; pointer-events: none; }
     body.tool-add .add-surface { pointer-events: all; }
-    body.tool-add .handle,
-    body.tool-add .ridge-hit { pointer-events: none; }
+    body.tool-add .handle { pointer-events: none; }
     .scene-bg { pointer-events: none; }
     #toolHint { position: absolute; left: 12px; bottom: 12px; padding: 8px 10px; background: rgba(0,0,0,.55); border-radius: 8px; font-size: 12px; color: #cde; pointer-events: none; }
     .horizon-guide { stroke: #ff6b6b; stroke-width: 1.5; stroke-dasharray: 6 4; pointer-events: none; }
@@ -179,7 +178,7 @@
       <button type="button" id="toolMove" class="active">移动/拖点</button>
       <button type="button" id="toolAdd">添加峰点</button>
     </div>
-    <p class="hint">绿点任意拖（x/y 相对画布 0–1，不限制高度）· <span class="kbd">Shift</span> 只调 Y · 脊线加点 · 双击删</p>
+    <p class="hint">移动模式：只拖绿点，不会误加点 · 要加点请切「添加峰点」· 双击删</p>
     <select id="layerPick"></select>
     <div class="row2">
       <button type="button" id="layerAdd">+ 新增山层</button>
@@ -539,7 +538,7 @@
         c.setAttribute('data-pi', String(pi));
         c.setAttribute('cx', x);
         c.setAttribute('cy', y);
-        c.setAttribute('r', '9');
+        c.setAttribute('r', '11');
         g.appendChild(c);
       });
     }
@@ -782,8 +781,18 @@
       touchRef({ fit: 'contain', userScale: 1, dx: 0, dy: 0 });
     };
 
-    document.getElementById('toolMove').onclick = () => { editTool = 'move'; updateToolUi(); render(); };
-    document.getElementById('toolAdd').onclick = () => { editTool = 'add'; updateToolUi(); render(); };
+    document.getElementById('toolMove').onclick = () => {
+      editTool = 'move';
+      updateToolUi();
+      render();
+      flashHint('移动模式：只拖绿点');
+    };
+    document.getElementById('toolAdd').onclick = () => {
+      editTool = 'add';
+      updateToolUi();
+      render();
+      flashHint('添加模式：点画布放置峰点');
+    };
 
     function onAddSurfaceClick(e) {
       if (editTool !== 'add') return;
@@ -836,12 +845,6 @@
         svg.setPointerCapture(e.pointerId);
         return;
       }
-      if (editTool === 'add') {
-        e.preventDefault();
-        const p = svgPoint(e);
-        insertPeak(scene.layers[layerIdx], pxToPeak(p.x, p.y, scene.layers[layerIdx]));
-        return;
-      }
       const t = e.target;
       if (t.classList?.contains('handle')) {
         const pi = +t.dataset.pi;
@@ -853,11 +856,14 @@
         };
         t.classList.add('active');
         t.setPointerCapture(e.pointerId);
+        e.preventDefault();
         return;
       }
-      if (t.classList?.contains('ridge-hit')) {
+      if (editTool === 'add') {
+        e.preventDefault();
         const p = svgPoint(e);
         insertPeak(scene.layers[layerIdx], pxToPeak(p.x, p.y, scene.layers[layerIdx]));
+        return;
       }
     });
     svg.addEventListener('pointermove', e => {
@@ -1021,7 +1027,11 @@
       }
       if (e.key === '[') touchRef({ opacity: Math.max(0, (scene.ref.opacity ?? 0.45) - 0.05) });
       if (e.key === ']') touchRef({ opacity: Math.min(1, (scene.ref.opacity ?? 0.45) + 0.05) });
-      if (e.key === 'a' || e.key === 'A') { editTool = editTool === 'add' ? 'move' : 'add'; updateToolUi(); }
+      if (e.key === 'a' || e.key === 'A') {
+        editTool = editTool === 'add' ? 'move' : 'add';
+        updateToolUi();
+        flashHint(editTool === 'add' ? '添加模式' : '移动模式');
+      }
       if (e.key === 'Escape') {
         editTool = 'move';
         updateToolUi();
