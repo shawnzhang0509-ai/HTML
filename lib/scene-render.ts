@@ -11,10 +11,10 @@ export function sceneSize() {
 export const SCENE_W = 1000;
 export const SCENE_H = 1400;
 
+/** x,y 均为 0–1 相对画布；y=0 顶 y=1 底，无“峰高”公式限制 */
 export function peakToPx(p: { x: number; y: number }, layer: Layer) {
   const { w, h } = sceneSize();
-  const y = (SCENE.horizon - 0.05 - p.y * (SCENE.horizon - 0.16)) * h - layer.base * 6;
-  return { x: p.x * w, y };
+  return { x: p.x * w, y: p.y * h + layer.base * 6 };
 }
 
 export function layerPath(l: Layer) {

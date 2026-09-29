@@ -1,6 +1,6 @@
 // lib/scene-config.ts — Wanaka 场景的唯一事实源
 // 修改这里 → 保存 → 热更新。Payman 风参考图：render.mode='faceted' + 各层 soft=0 + 描边很淡。
-// 坐标系: 1000 x 1400。y 越小峰越高。
+// 坐标系: design 宽高。peak.x / peak.y 为 0–1（左→右，顶→底），拖哪算哪。
 
 export type Peak = { x: number; y: number };
 
