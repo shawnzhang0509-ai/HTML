@@ -193,7 +193,9 @@
     <label><input type="checkbox" id="layerFaceted" /> 当前层：面片明暗（Payman 棱线）</label>
     <label>面片对比</label>
     <input id="facetContrast" type="range" min="0" max="0.3" step="0.01" value="0.14" />
-    <p class="hint">明暗交界 = 同一层里每个峰拆<strong>左亮/右暗</strong>三角，不是单独图层。</p>
+    <label>明暗线斜率 <span id="facetSlopeVal"></span></label>
+    <input id="facetSlope" type="range" min="0.15" max="0.85" step="0.01" value="0.45" />
+    <p class="hint">面片=每两个峰之间的<strong>整坡</strong>，明暗线沿坡走；峰点别过密，否则像栅栏。</p>
     <label>地平线 <span id="horizonVal"></span></label>
     <input id="horizon" type="range" min="0.42" max="0.62" step="0.001" />
     <label>base / soft</label>
@@ -237,7 +239,7 @@
       colors: { sky: '#062a4a', lake: '#0a5083', lakedeep: '#062a4a', band: '#2a6ea0' },
       tree: { x: 0.33, size: 0.15, src: '/tree.svg' },
       ref: { dx: 0, dy: 0, userScale: 1, fit: 'contain', opacity: 0.45, dataUrl: '', naturalW: 0, naturalH: 0 },
-      render: { facetLight: 0.14, facetDark: 0.12 },
+      render: { facetLight: 0.14, facetDark: 0.12, facetRidgeSlope: 0.45 },
       layers: [
         { color: '#b8d4ea', cssVar: '--m1', base: 0, soft: 0, peaks: [{x:0,y:.55},{x:.18,y:.48},{x:.38,y:.52},{x:.58,y:.5},{x:.8,y:.54},{x:1,y:.58}] },
         { color: '#5a8fc0', cssVar: '--m2', base: 10, soft: 0, peaks: [{x:0,y:.38},{x:.24,y:.32},{x:.5,y:.34},{x:.78,y:.36},{x:1,y:.4}] },
@@ -422,18 +424,21 @@
       const P = layer.peaks.map((p) => peakPx(p, layer));
       const fl = scene.render?.facetLight ?? 0.14;
       const fd = scene.render?.facetDark ?? 0.12;
+      const slope = scene.render?.facetRidgeSlope ?? 0.45;
       const out = [];
       for (let i = 0; i < P.length; i++) {
         const apex = P[i];
-        const xL = i === 0 ? -20 : (P[i - 1].x + apex.x) / 2;
-        const xR = i === P.length - 1 ? W + 20 : (apex.x + P[i + 1].x) / 2;
-        const footX = apex.x;
+        const vLx = i === 0 ? -20 : (P[i - 1].x + apex.x) / 2;
+        const vRx = i === P.length - 1 ? W + 20 : (apex.x + P[i + 1].x) / 2;
+        const drop = Math.max(8, apex.y - y0);
+        let splitX = apex.x - drop * slope;
+        splitX = Math.max(vLx + 2, Math.min(vRx - 2, splitX));
         out.push({
-          d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${xL.toFixed(1)} ${y0} L ${footX.toFixed(1)} ${y0} Z`,
+          d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${vLx.toFixed(1)} ${y0} L ${splitX.toFixed(1)} ${y0} Z`,
           fill: shadeHex(layer.color, fl),
         });
         out.push({
-          d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${footX.toFixed(1)} ${y0} L ${xR.toFixed(1)} ${y0} Z`,
+          d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${splitX.toFixed(1)} ${y0} L ${vRx.toFixed(1)} ${y0} Z`,
           fill: shadeHex(layer.color, -fd),
         });
       }
@@ -597,6 +602,9 @@
       document.getElementById('layerColor').value = L.color;
       document.getElementById('layerFaceted').checked = !!L.faceted;
       document.getElementById('facetContrast').value = scene.render?.facetLight ?? 0.14;
+      const sl = scene.render?.facetRidgeSlope ?? 0.45;
+      document.getElementById('facetSlope').value = sl;
+      document.getElementById('facetSlopeVal').textContent = sl.toFixed(2);
     }
 
     const VIEW_MODES = ['trace', 'wipe', 'ref-only', 'svg-only'];
@@ -693,6 +701,12 @@
     document.getElementById('facetContrast').oninput = e => {
       const v = +e.target.value;
       scene.render = { ...scene.render, facetLight: v, facetDark: v * 0.85 };
+      render();
+    };
+    document.getElementById('facetSlope').oninput = e => {
+      const v = +e.target.value;
+      scene.render = { ...scene.render, facetRidgeSlope: v };
+      document.getElementById('facetSlopeVal').textContent = v.toFixed(2);
       render();
     };
 

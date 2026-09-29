@@ -37,28 +37,29 @@ export function layerPath(l: Layer) {
 export type Facet = { d: string; fill: string };
 
 /**
- * 低多边形面片：每个峰拆成左亮 / 右暗两个三角形，棱线靠邻色对比 + 可选细描边。
- * 光源默认左上（与 Payman 参考图一致）。
+ * 面片明暗：每个峰在左右谷点间成梯形，分界从峰顶斜切到基线（左上光源），避免峰正下方竖条。
  */
 export function layerFacets(l: Layer, baseColor: string): Facet[] {
   const { w, h } = sceneSize();
   const y0 = h * SCENE.horizon;
   const P = l.peaks.map((p) => peakToPx(p, l));
-  const { facetLight, facetDark } = SCENE.render;
+  const { facetLight, facetDark, facetRidgeSlope = 0.45 } = SCENE.render;
   const facets: Facet[] = [];
 
   for (let i = 0; i < P.length; i++) {
     const apex = P[i];
-    const xL = i === 0 ? -20 : (P[i - 1].x + apex.x) / 2;
-    const xR = i === P.length - 1 ? w + 20 : (apex.x + P[i + 1].x) / 2;
-    const footX = apex.x;
+    const vLx = i === 0 ? -20 : (P[i - 1].x + apex.x) / 2;
+    const vRx = i === P.length - 1 ? w + 20 : (apex.x + P[i + 1].x) / 2;
+    const drop = Math.max(8, apex.y - y0);
+    let splitX = apex.x - drop * facetRidgeSlope;
+    splitX = Math.max(vLx + 2, Math.min(vRx - 2, splitX));
 
     facets.push({
-      d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${xL.toFixed(1)} ${y0} L ${footX.toFixed(1)} ${y0} Z`,
+      d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${vLx.toFixed(1)} ${y0} L ${splitX.toFixed(1)} ${y0} Z`,
       fill: shadeHex(baseColor, facetLight),
     });
     facets.push({
-      d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${footX.toFixed(1)} ${y0} L ${xR.toFixed(1)} ${y0} Z`,
+      d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${splitX.toFixed(1)} ${y0} L ${vRx.toFixed(1)} ${y0} Z`,
       fill: shadeHex(baseColor, -facetDark),
     });
   }

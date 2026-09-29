@@ -32,6 +32,7 @@ export const SCENE = {
     mode: 'faceted' as 'faceted' | 'silhouette',
     facetLight: 0.14, // 左斜面提亮
     facetDark: 0.12, // 右斜面压暗
+    facetRidgeSlope: 0.45, // 明暗交界斜率(越大越竖，越小越贴坡)
     edgeStroke: 0.1, // 0=纯色块棱线；0.08~0.15=细白描边
     edgeWidth: 0.75,
   },
