@@ -37,8 +37,7 @@ export function layerPath(l: Layer) {
 export type Facet = { d: string; fill: string };
 
 /**
- * 面片明暗：按相邻两峰之间的「坡段」切亮/暗（左上光），交界从坡段左峰顶斜落到基线。
- * 若按单峰切分，峰点过密时谷口太窄，split 会被夹到峰顶正下方 → 竖条栅栏。
+ * 面片明暗：每个坡段一块四边形；棱线 = 左峰顶 → 基线上 [左谷,右谷] 内一点（非峰顶正下方竖切）。
  */
 export function layerFacets(l: Layer, baseColor: string): Facet[] {
   const { w, h } = sceneSize();
@@ -54,20 +53,19 @@ export function layerFacets(l: Layer, baseColor: string): Facet[] {
     vLx: number,
     vRx: number,
   ) {
-    const dropA = Math.max(8, A.y - y0);
-    let footX = A.x - dropA * facetRidgeSlope;
-    footX = Math.max(vLx, Math.min(vRx, footX));
+    const t = Math.max(0.08, Math.min(0.92, facetRidgeSlope));
+    const sx = vLx + t * (vRx - vLx);
     facets.push({
       d: `M ${A.x.toFixed(1)} ${A.y.toFixed(1)} L ${B.x.toFixed(1)} ${B.y.toFixed(1)} L ${vRx.toFixed(1)} ${y0s} Z`,
       fill: shadeHex(baseColor, facetLight),
     });
     facets.push({
-      d: `M ${A.x.toFixed(1)} ${A.y.toFixed(1)} L ${footX.toFixed(1)} ${y0s} L ${vLx.toFixed(1)} ${y0s} Z`,
+      d: `M ${A.x.toFixed(1)} ${A.y.toFixed(1)} L ${sx.toFixed(1)} ${y0s} L ${vLx.toFixed(1)} ${y0s} Z`,
       fill: shadeHex(baseColor, -facetDark),
     });
-    if (footX < vRx - 0.5) {
+    if (sx < vRx - 0.5) {
       facets.push({
-        d: `M ${A.x.toFixed(1)} ${A.y.toFixed(1)} L ${vRx.toFixed(1)} ${y0s} L ${footX.toFixed(1)} ${y0s} Z`,
+        d: `M ${A.x.toFixed(1)} ${A.y.toFixed(1)} L ${vRx.toFixed(1)} ${y0s} L ${sx.toFixed(1)} ${y0s} Z`,
         fill: shadeHex(baseColor, facetLight),
       });
     }
@@ -75,19 +73,7 @@ export function layerFacets(l: Layer, baseColor: string): Facet[] {
 
   if (P.length === 1) {
     const apex = P[0];
-    const vLx = -20;
-    const vRx = w + 20;
-    const drop = Math.max(8, apex.y - y0);
-    let footX = apex.x - drop * facetRidgeSlope;
-    footX = Math.max(vLx, Math.min(vRx, footX));
-    facets.push({
-      d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${vRx.toFixed(1)} ${y0s} L ${footX.toFixed(1)} ${y0s} Z`,
-      fill: shadeHex(baseColor, facetLight),
-    });
-    facets.push({
-      d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${footX.toFixed(1)} ${y0s} L ${vLx.toFixed(1)} ${y0s} Z`,
-      fill: shadeHex(baseColor, -facetDark),
-    });
+    segmentFacets(apex, { x: apex.x + 40, y: apex.y }, -20, w + 20);
     return facets;
   }
 

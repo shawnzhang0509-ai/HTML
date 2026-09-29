@@ -207,9 +207,9 @@
     <label><input type="checkbox" id="layerFaceted" /> 当前层：面片明暗（Payman 棱线）</label>
     <label>面片对比</label>
     <input id="facetContrast" type="range" min="0" max="0.3" step="0.01" value="0.14" />
-    <label>明暗线斜率 <span id="facetSlopeVal"></span></label>
+    <label>棱线脚点（左谷→右谷） <span id="facetSlopeVal"></span></label>
     <input id="facetSlope" type="range" min="0.15" max="0.85" step="0.01" value="0.45" />
-    <p class="hint">面片按<strong>相邻两峰之间的坡段</strong>切亮/暗（不是每个峰顶竖切）；峰点过密仍会碎，适当删点或合并。</p>
+    <p class="hint"><strong>描形建议关面片</strong>，只留纯色块；每层 5~8 个主棱峰再开面片预览。面片是 low-poly 近似，追即梦照片别较真。</p>
     <label>地平线 <span id="horizonVal"></span></label>
     <input id="horizon" type="range" min="0.42" max="0.62" step="0.001" />
     <label>base / soft</label>
@@ -504,20 +504,19 @@
       const out = [];
 
       function segmentFacets(A, B, vLx, vRx) {
-        const dropA = Math.max(8, A.y - y0);
-        let footX = A.x - dropA * slope;
-        footX = Math.max(vLx, Math.min(vRx, footX));
+        const t = Math.max(0.08, Math.min(0.92, slope));
+        const sx = vLx + t * (vRx - vLx);
         out.push({
           d: `M ${A.x.toFixed(1)} ${A.y.toFixed(1)} L ${B.x.toFixed(1)} ${B.y.toFixed(1)} L ${vRx.toFixed(1)} ${y0s} Z`,
           fill: shadeHex(layer.color, fl),
         });
         out.push({
-          d: `M ${A.x.toFixed(1)} ${A.y.toFixed(1)} L ${footX.toFixed(1)} ${y0s} L ${vLx.toFixed(1)} ${y0s} Z`,
+          d: `M ${A.x.toFixed(1)} ${A.y.toFixed(1)} L ${sx.toFixed(1)} ${y0s} L ${vLx.toFixed(1)} ${y0s} Z`,
           fill: shadeHex(layer.color, -fd),
         });
-        if (footX < vRx - 0.5) {
+        if (sx < vRx - 0.5) {
           out.push({
-            d: `M ${A.x.toFixed(1)} ${A.y.toFixed(1)} L ${vRx.toFixed(1)} ${y0s} L ${footX.toFixed(1)} ${y0s} Z`,
+            d: `M ${A.x.toFixed(1)} ${A.y.toFixed(1)} L ${vRx.toFixed(1)} ${y0s} L ${sx.toFixed(1)} ${y0s} Z`,
             fill: shadeHex(layer.color, fl),
           });
         }
@@ -525,19 +524,7 @@
 
       if (P.length === 1) {
         const apex = P[0];
-        const vLx = -20;
-        const vRx = W + 20;
-        const drop = Math.max(8, apex.y - y0);
-        let footX = apex.x - drop * slope;
-        footX = Math.max(vLx, Math.min(vRx, footX));
-        out.push({
-          d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${vRx.toFixed(1)} ${y0s} L ${footX.toFixed(1)} ${y0s} Z`,
-          fill: shadeHex(layer.color, fl),
-        });
-        out.push({
-          d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${footX.toFixed(1)} ${y0s} L ${vLx.toFixed(1)} ${y0s} Z`,
-          fill: shadeHex(layer.color, -fd),
-        });
+        segmentFacets(apex, { x: apex.x + 40, y: apex.y }, -20, W + 20);
         return out;
       }
 
@@ -844,6 +831,7 @@
     };
     document.getElementById('layerBack').onclick = () => {
       if (layerIdx <= 0) return;
+      historyBeforeEdit();
       const t = scene.layers[layerIdx];
       scene.layers.splice(layerIdx, 1);
       scene.layers.splice(layerIdx - 1, 0, t);
@@ -853,6 +841,7 @@
     };
     document.getElementById('layerFront').onclick = () => {
       if (layerIdx >= scene.layers.length - 1) return;
+      historyBeforeEdit();
       const t = scene.layers[layerIdx];
       scene.layers.splice(layerIdx, 1);
       scene.layers.splice(layerIdx + 1, 0, t);
