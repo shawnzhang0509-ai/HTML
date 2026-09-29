@@ -1,4 +1,5 @@
 // 共享渲染逻辑 — React 组件与 scene-studio 预览共用同一套 path 算法
+import { shadeHex } from './scene-color';
 import type { Layer } from './scene-config';
 import { SCENE } from './scene-config';
 
@@ -27,6 +28,36 @@ export function layerPath(l: Layer) {
   return d;
 }
 
+export type Facet = { d: string; fill: string };
+
+/**
+ * 低多边形面片：每个峰拆成左亮 / 右暗两个三角形，棱线靠邻色对比 + 可选细描边。
+ * 光源默认左上（与 Payman 参考图一致）。
+ */
+export function layerFacets(l: Layer, baseColor: string): Facet[] {
+  const y0 = SCENE_H * SCENE.horizon;
+  const P = l.peaks.map((p) => peakToPx(p, l));
+  const { facetLight, facetDark } = SCENE.render;
+  const facets: Facet[] = [];
+
+  for (let i = 0; i < P.length; i++) {
+    const apex = P[i];
+    const xL = i === 0 ? -20 : (P[i - 1].x + apex.x) / 2;
+    const xR = i === P.length - 1 ? 1020 : (apex.x + P[i + 1].x) / 2;
+    const footX = apex.x;
+
+    facets.push({
+      d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${xL.toFixed(1)} ${y0} L ${footX.toFixed(1)} ${y0} Z`,
+      fill: shadeHex(baseColor, facetLight),
+    });
+    facets.push({
+      d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${footX.toFixed(1)} ${y0} L ${xR.toFixed(1)} ${y0} Z`,
+      fill: shadeHex(baseColor, -facetDark),
+    });
+  }
+  return facets;
+}
+
 export function viewBoxForVariant(variant: 'wide' | 'full') {
   return variant === 'wide'
     ? `0 ${Math.round(SCENE_H * (SCENE.horizon - 0.36))} ${SCENE_W} ${Math.round(SCENE_H * 0.52)}`
@@ -39,12 +70,19 @@ export function buildSceneSvg(variant: 'wide' | 'full') {
   const ty = SCENE_H * (SCENE.horizon - 0.02) - SCENE_H * SCENE.tree.size;
   const tx = SCENE.tree.x * SCENE_W;
   const ts = SCENE_H * SCENE.tree.size * 0.55;
-  const paths = SCENE.layers
-    .map(
-      (l) =>
-        `<path d="${layerPath(l)}" fill="var(${l.cssVar}, ${l.color})"/>`,
-    )
-    .join('\n    ');
+  const paths =
+    SCENE.render.mode === 'faceted'
+      ? SCENE.layers
+          .flatMap((l) =>
+            layerFacets(l, l.color).map(
+              (f) =>
+                `<path d="${f.d}" fill="var(${l.cssVar}, ${f.fill})"${SCENE.render.edgeStroke > 0 ? ` stroke="rgba(255,255,255,${SCENE.render.edgeStroke})" stroke-width="${SCENE.render.edgeWidth}"` : ''}/>`,
+            ),
+          )
+          .join('\n    ')
+      : SCENE.layers
+          .map((l) => `<path d="${layerPath(l)}" fill="var(${l.cssVar}, ${l.color})"/>`)
+          .join('\n    ');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" preserveAspectRatio="xMidYMid slice">
   <defs>
