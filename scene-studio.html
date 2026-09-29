@@ -205,7 +205,22 @@
     <p class="hint">快捷键：<span class="kbd">A</span> 添加峰点 · <span class="kbd">H</span> 底图 · <span class="kbd">Esc</span> 退出对齐</p>
   </aside>
   <script>
-    const LS_KEY = 'wanaka-scene-trace-v7';
+    const LS_KEY = 'wanaka-scene-trace-v8';
+
+    /** 双击 html 打开时没有 dev 服务器，/tree.svg 会裂图 */
+    const TREE_INLINE =
+      'data:image/svg+xml,' +
+      encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 200"><path fill="#0a1f33" d="M60 8 C42 48 18 72 22 98 C24 118 38 128 48 132 L48 200 L72 200 L72 132 C82 128 96 118 98 98 C102 72 78 48 60 8Z"/></svg>',
+      );
+
+    function resolveTreeHref() {
+      const src = scene.tree?.src;
+      if (!src) return '';
+      if (src.startsWith('data:') || /^https?:/i.test(src)) return src;
+      if (location.protocol === 'file:') return TREE_INLINE;
+      return src;
+    }
 
     const defaultScene = {
       canvas: { width: 1000, height: 1400, fit: 'slice' },
@@ -373,17 +388,11 @@
 
     function peakPx(p, layer) {
       const H = getH(), W = getW();
-      const y = (scene.horizon - 0.05 - p.y * (scene.horizon - 0.16)) * H - layer.base * 6;
-      return { x: p.x * W, y };
+      return { x: p.x * W, y: p.y * H + layer.base * 6 };
     }
-    /** y 允许 -0.35…1.35，便于把峰点拖近/越过地平线，不再在 y=0 硬卡住 */
     function pxToPeak(x, y, layer) {
       const H = getH(), W = getW();
-      const py = (scene.horizon - 0.05 - (y + layer.base * 6) / H) / (scene.horizon - 0.16);
-      return {
-        x: Math.min(1.05, Math.max(-0.05, x / W)),
-        y: Math.min(1.35, Math.max(-0.35, py)),
-      };
+      return { x: x / W, y: (y - layer.base * 6) / H };
     }
     function layerPath(layer) {
       const H = getH(), W = getW();
@@ -570,10 +579,10 @@
         base: (last?.base ?? 0) + 12,
         soft: 0,
         peaks: [
-          { x: 0, y: 0.25 },
-          { x: 0.35, y: 0.45 },
-          { x: 0.65, y: 0.35 },
-          { x: 1, y: 0.28 },
+          { x: 0, y: 0.32 },
+          { x: 0.35, y: 0.38 },
+          { x: 0.65, y: 0.34 },
+          { x: 1, y: 0.36 },
         ],
       });
       layerIdx = scene.layers.length - 1;
