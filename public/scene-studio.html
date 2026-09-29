@@ -108,7 +108,7 @@
   </div>
   <aside>
     <h2>Scene Trace</h2>
-    <p class="hint">二次人工介入工具：AI/即梦只提供<strong>底图</strong>，你在矢量层上<strong>对照描</strong>，满意后导出数字进仓库。不追求自动生成。</p>
+    <p class="hint">在本地仓库（如 <code>D:\工作\HTML</code>）<code>git pull</code> + <code>npm run dev</code> 打开本页。即梦出底图，你逐层描矢量，导出进 <code>scene-config.ts</code>。</p>
     <ol class="steps">
       <li>导入底图，对齐地平线/构图</li>
       <li>单层模式：从远到近拖<strong>绿点</strong>；<strong>点白色脊线</strong>或「添加峰点」模式加点</li>
@@ -179,8 +179,14 @@
       <button type="button" id="toolMove" class="active">移动/拖点</button>
       <button type="button" id="toolAdd">添加峰点</button>
     </div>
-    <p class="hint">拖绿点调位置 · 按住 <span class="kbd">Shift</span> 只调高度 · 脊线点击插入 · 双击删除</p>
+    <p class="hint">绿点可拖过地平线附近（y 不再卡死在 0）· <span class="kbd">Shift</span> 只调高度 · 脊线加点 · 双击删</p>
     <select id="layerPick"></select>
+    <div class="row2">
+      <button type="button" id="layerAdd">+ 新增山层</button>
+      <button type="button" id="layerDup">复制当前层</button>
+    </div>
+    <button type="button" id="layerDel">删除当前层</button>
+    <p class="hint">近/中/远 = 多个 layer，从<strong>最远</strong>层开始描，需要几层就点几次「新增」</p>
     <label>地平线 <span id="horizonVal"></span></label>
     <input id="horizon" type="range" min="0.42" max="0.62" step="0.001" />
     <label>base / soft</label>
@@ -196,10 +202,10 @@
     <input id="jsonFile" type="file" accept="application/json,.json" hidden />
     <label>片段预览</label>
     <textarea id="out" readonly></textarea>
-    <p class="hint">快捷键：<span class="kbd">1-4</span> 切层 · <span class="kbd">A</span> 添加模式 · <span class="kbd">H</span> 底图 · <span class="kbd">Esc</span> 退出对齐/添加</p>
+    <p class="hint">快捷键：<span class="kbd">A</span> 添加峰点 · <span class="kbd">H</span> 底图 · <span class="kbd">Esc</span> 退出对齐</p>
   </aside>
   <script>
-    const LS_KEY = 'wanaka-scene-trace-v6';
+    const LS_KEY = 'wanaka-scene-trace-v7';
 
     const defaultScene = {
       canvas: { width: 1000, height: 1400, fit: 'slice' },
@@ -370,10 +376,14 @@
       const y = (scene.horizon - 0.05 - p.y * (scene.horizon - 0.16)) * H - layer.base * 6;
       return { x: p.x * W, y };
     }
+    /** y 允许 -0.35…1.35，便于把峰点拖近/越过地平线，不再在 y=0 硬卡住 */
     function pxToPeak(x, y, layer) {
       const H = getH(), W = getW();
       const py = (scene.horizon - 0.05 - (y + layer.base * 6) / H) / (scene.horizon - 0.16);
-      return { x: Math.min(1, Math.max(0, x / W)), y: Math.min(1, Math.max(0, py)) };
+      return {
+        x: Math.min(1.05, Math.max(-0.05, x / W)),
+        y: Math.min(1.35, Math.max(-0.35, py)),
+      };
     }
     function layerPath(layer) {
       const H = getH(), W = getW();
@@ -496,6 +506,7 @@
       applyRefTransform();
       persist();
       syncPanel();
+      refreshLayerSelect();
       updateToolUi();
     }
 
@@ -527,14 +538,65 @@
       render();
     }
 
-    scene.layers.forEach((l, i) => {
-      const o = document.createElement('option');
-      o.value = i;
-      o.textContent = `层 ${i + 1} ${l.cssVar}（${i === 0 ? '最远' : i === 3 ? '最近' : '中景'}）`;
-      document.getElementById('layerPick').appendChild(o);
-    });
-    document.getElementById('layerPick').value = String(layerIdx);
+    function layerDepthLabel(i, n) {
+      if (n <= 1) return '单层';
+      if (i === 0) return '最远';
+      if (i === n - 1) return '最近';
+      return `中景 ${i}/${n - 1}`;
+    }
+
+    function refreshLayerSelect() {
+      const sel = document.getElementById('layerPick');
+      sel.innerHTML = '';
+      scene.layers.forEach((l, i) => {
+        const o = document.createElement('option');
+        o.value = i;
+        o.textContent = `层 ${i + 1} ${l.cssVar}（${layerDepthLabel(i, scene.layers.length)}）`;
+        sel.appendChild(o);
+      });
+      layerIdx = Math.min(layerIdx, scene.layers.length - 1);
+      sel.value = String(layerIdx);
+    }
+
+    refreshLayerSelect();
     document.getElementById('layerPick').onchange = e => { layerIdx = +e.target.value; render(); };
+
+    document.getElementById('layerAdd').onclick = () => {
+      const n = scene.layers.length;
+      const last = scene.layers[n - 1];
+      scene.layers.push({
+        color: '#2a5070',
+        cssVar: `--m${n + 1}`,
+        base: (last?.base ?? 0) + 12,
+        soft: 0,
+        peaks: [
+          { x: 0, y: 0.25 },
+          { x: 0.35, y: 0.45 },
+          { x: 0.65, y: 0.35 },
+          { x: 1, y: 0.28 },
+        ],
+      });
+      layerIdx = scene.layers.length - 1;
+      refreshLayerSelect();
+      render();
+    };
+    document.getElementById('layerDup').onclick = () => {
+      const src = scene.layers[layerIdx];
+      const copy = JSON.parse(JSON.stringify(src));
+      copy.cssVar = `--m${scene.layers.length + 1}`;
+      copy.base = src.base + 8;
+      scene.layers.splice(layerIdx + 1, 0, copy);
+      layerIdx += 1;
+      refreshLayerSelect();
+      render();
+    };
+    document.getElementById('layerDel').onclick = () => {
+      if (scene.layers.length <= 1) { alert('至少保留一层'); return; }
+      scene.layers.splice(layerIdx, 1);
+      layerIdx = Math.max(0, layerIdx - 1);
+      refreshLayerSelect();
+      render();
+    };
 
     document.querySelectorAll('.modeBtn').forEach(btn => {
       btn.onclick = () => setViewMode(btn.dataset.mode);
