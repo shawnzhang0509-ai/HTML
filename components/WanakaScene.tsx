@@ -16,7 +16,8 @@ function MountainLayer({ l }: { l: (typeof SCENE.layers)[number] }) {
         }
       : {};
 
-  if (SCENE.render.mode === 'faceted') {
+  const faceted = l.faceted ?? SCENE.render.mode === 'faceted';
+  if (faceted) {
     return (
       <g key={l.cssVar}>
         {layerFacets(l, l.color).map((f, i) => (

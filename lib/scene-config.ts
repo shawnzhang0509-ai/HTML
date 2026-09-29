@@ -8,7 +8,9 @@ export type Layer = {
   color: string;
   cssVar: string;
   base: number;
-  soft: number; // faceted 模式忽略曲线；silhouette 时 0=硬脊线
+  soft: number; // faceted 时忽略；silhouette 时 0=硬脊线
+  /** true=峰点拆左右面片（明暗棱）；不设则跟随 render.mode */
+  faceted?: boolean;
   peaks: Peak[];
 };
 

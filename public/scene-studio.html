@@ -172,7 +172,7 @@
     <label>矢量层透明度</label>
     <input id="vecOp" type="range" min="0" max="1" step="0.01" value="1" />
     <label><input type="checkbox" id="soloLayer" checked /> 单层模式（只显示当前层）</label>
-    <label><input type="checkbox" id="showLake" checked /> 显示湖/树（描山时可关）</label>
+    <label><input type="checkbox" id="showLake" /> 显示湖/树（描山建议关；树图裂了见下方说明）</label>
 
     <h3>3 · 当前层 · 峰点</h3>
     <div class="row2">
@@ -186,7 +186,15 @@
       <button type="button" id="layerDup">复制当前层</button>
     </div>
     <button type="button" id="layerDel">删除当前层</button>
-    <p class="hint">近/中/远 = 多个 layer，从<strong>最远</strong>层开始描，需要几层就点几次「新增」</p>
+    <div class="row2">
+      <button type="button" id="layerBack">↤ 往远（底层）</button>
+      <button type="button" id="layerFront">往近（顶层）↦</button>
+    </div>
+    <p class="hint">绘制顺序：列表越<strong>后</strong>越靠近镜头。近/中/远 = 多层叠放，不是一层一个峰。</p>
+    <label><input type="checkbox" id="layerFaceted" /> 当前层：面片明暗（Payman 棱线）</label>
+    <label>面片对比</label>
+    <input id="facetContrast" type="range" min="0" max="0.3" step="0.01" value="0.14" />
+    <p class="hint">明暗交界 = 同一层里每个峰拆<strong>左亮/右暗</strong>三角，不是单独图层。</p>
     <label>地平线 <span id="horizonVal"></span></label>
     <input id="horizon" type="range" min="0.42" max="0.62" step="0.001" />
     <label>base / soft</label>
@@ -228,6 +236,7 @@
       colors: { sky: '#062a4a', lake: '#0a5083', lakedeep: '#062a4a', band: '#2a6ea0' },
       tree: { x: 0.33, size: 0.15, src: '/tree.svg' },
       ref: { dx: 0, dy: 0, userScale: 1, fit: 'contain', opacity: 0.45, dataUrl: '', naturalW: 0, naturalH: 0 },
+      render: { facetLight: 0.14, facetDark: 0.12 },
       layers: [
         { color: '#b8d4ea', cssVar: '--m1', base: 0, soft: 0, peaks: [{x:0,y:.55},{x:.18,y:.48},{x:.38,y:.52},{x:.58,y:.5},{x:.8,y:.54},{x:1,y:.58}] },
         { color: '#5a8fc0', cssVar: '--m2', base: 10, soft: 0, peaks: [{x:0,y:.38},{x:.24,y:.32},{x:.5,y:.34},{x:.78,y:.36},{x:1,y:.4}] },
@@ -394,6 +403,42 @@
       const H = getH(), W = getW();
       return { x: x / W, y: (y - layer.base * 6) / H };
     }
+    function shadeHex(hex, amount) {
+      const h = hex.replace('#', '');
+      const n = parseInt(h.length === 3 ? h.replace(/./g, (c) => c + c) : h, 16);
+      let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+      const t = amount >= 0 ? 255 : 0;
+      const f = Math.abs(amount);
+      r = Math.round(r + (t - r) * f);
+      g = Math.round(g + (t - g) * f);
+      b = Math.round(b + (t - b) * f);
+      return `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+    }
+
+    function layerFacets(layer) {
+      const H = getH(), W = getW();
+      const y0 = H * scene.horizon;
+      const P = layer.peaks.map((p) => peakPx(p, layer));
+      const fl = scene.render?.facetLight ?? 0.14;
+      const fd = scene.render?.facetDark ?? 0.12;
+      const out = [];
+      for (let i = 0; i < P.length; i++) {
+        const apex = P[i];
+        const xL = i === 0 ? -20 : (P[i - 1].x + apex.x) / 2;
+        const xR = i === P.length - 1 ? W + 20 : (apex.x + P[i + 1].x) / 2;
+        const footX = apex.x;
+        out.push({
+          d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${xL.toFixed(1)} ${y0} L ${footX.toFixed(1)} ${y0} Z`,
+          fill: shadeHex(layer.color, fl),
+        });
+        out.push({
+          d: `M ${apex.x.toFixed(1)} ${apex.y.toFixed(1)} L ${footX.toFixed(1)} ${y0} L ${xR.toFixed(1)} ${y0} Z`,
+          fill: shadeHex(layer.color, -fd),
+        });
+      }
+      return out;
+    }
+
     function layerPath(layer) {
       const H = getH(), W = getW();
       const y0 = H * scene.horizon;
@@ -442,8 +487,17 @@
       const layers = scene.layers.map((l, i) => {
         const dim = solo && i !== layerIdx;
         const cls = dim ? 'layer-dim' : '';
-        const op = dim ? '' : '';
-        return `<path class="mountain-fill ${cls}" data-layer="${i}" d="${layerPath(l)}" fill="${l.color}" ${dim ? 'opacity="0.15"' : ''}/>`;
+        const opAttr = dim ? ' opacity="0.15"' : '';
+        const useFacet = l.faceted === true;
+        if (useFacet) {
+          return layerFacets(l)
+            .map(
+              (f, fi) =>
+                `<path class="mountain-fill ${cls}" data-layer="${i}" d="${f.d}" fill="${f.fill}"${opAttr}/>`,
+            )
+            .join('');
+        }
+        return `<path class="mountain-fill ${cls}" data-layer="${i}" d="${layerPath(l)}" fill="${l.color}"${opAttr}/>`;
       }).join('');
       const r = scene.ref || {};
       let refSvg = '';
@@ -451,10 +505,14 @@
         const rect = computeRefRect();
         refSvg = `<image class="ref-image scene-bg" href="${r.dataUrl}" x="${rect.x}" y="${rect.y}" width="${rect.w}" height="${rect.h}" opacity="${r.opacity ?? 0.45}" preserveAspectRatio="none"/>`;
       }
+      const treeHref = resolveTreeHref();
+      const treeTag = treeHref
+        ? `<image class="scene-bg lake-ui" href="${treeHref}" x="${tx}" y="${ty}" width="${ts * 0.58}" height="${ts}"/>`
+        : '';
       const lake = showLake ? `
         <rect class="scene-bg lake-ui" x="0" y="${y0}" width="${W}" height="${H - y0}" fill="${scene.colors.lake}"/>
         <rect class="scene-bg lake-ui" x="0" y="${y0 - 2}" width="${W}" height="3" fill="${scene.colors.band}" opacity="0.45"/>
-        <image class="scene-bg lake-ui" href="${scene.tree.src}" x="${tx}" y="${ty}" width="${ts * 0.58}" height="${ts}"/>
+        ${treeTag}
       ` : '';
       const hz = `<line class="horizon-guide" x1="0" y1="${y0}" x2="${W}" y2="${y0}"/>`;
       return `${refSvg}${lake}${layers}${hz}<g id="handles"></g>`;
@@ -522,7 +580,8 @@
     function formatSnippet() {
       const layers = scene.layers.map(l => {
         const peaks = l.peaks.map(p => `{x:${p.x.toFixed(3)},y:${p.y.toFixed(3)}}`).join(', ');
-        return `    { color: '${l.color}', cssVar: '${l.cssVar}', base: ${l.base}, soft: ${l.soft.toFixed(2)}, peaks: [ ${peaks} ] }`;
+        const facet = l.faceted ? ', faceted: true' : '';
+        return `    { color: '${l.color}', cssVar: '${l.cssVar}', base: ${l.base}, soft: ${l.soft.toFixed(2)}${facet}, peaks: [ ${peaks} ] }`;
       }).join(',\n');
       const fit = scene.canvas?.fit || 'slice';
       return `  design: { width: ${getW()}, height: ${getH()}, fit: '${fit}' },\n  horizon: ${scene.horizon.toFixed(3)},\n  layers: [\n${layers}\n  ],`;
@@ -535,6 +594,8 @@
       document.getElementById('base').value = L.base;
       document.getElementById('soft').value = L.soft;
       document.getElementById('layerColor').value = L.color;
+      document.getElementById('layerFaceted').checked = !!L.faceted;
+      document.getElementById('facetContrast').value = scene.render?.facetLight ?? 0.14;
     }
 
     const VIEW_MODES = ['trace', 'wipe', 'ref-only', 'svg-only'];
@@ -604,6 +665,33 @@
       scene.layers.splice(layerIdx, 1);
       layerIdx = Math.max(0, layerIdx - 1);
       refreshLayerSelect();
+      render();
+    };
+    document.getElementById('layerBack').onclick = () => {
+      if (layerIdx <= 0) return;
+      const t = scene.layers[layerIdx];
+      scene.layers.splice(layerIdx, 1);
+      scene.layers.splice(layerIdx - 1, 0, t);
+      layerIdx -= 1;
+      refreshLayerSelect();
+      render();
+    };
+    document.getElementById('layerFront').onclick = () => {
+      if (layerIdx >= scene.layers.length - 1) return;
+      const t = scene.layers[layerIdx];
+      scene.layers.splice(layerIdx, 1);
+      scene.layers.splice(layerIdx + 1, 0, t);
+      layerIdx += 1;
+      refreshLayerSelect();
+      render();
+    };
+    document.getElementById('layerFaceted').onchange = e => {
+      scene.layers[layerIdx].faceted = e.target.checked;
+      render();
+    };
+    document.getElementById('facetContrast').oninput = e => {
+      const v = +e.target.value;
+      scene.render = { ...scene.render, facetLight: v, facetDark: v * 0.85 };
       render();
     };
 
